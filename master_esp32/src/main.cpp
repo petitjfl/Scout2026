@@ -255,7 +255,9 @@ void markPendingSuccess(int slot) {
 }
 
 void processPendingQueue() {
+  static unsigned long lastSendMs = 0;
   unsigned long now = millis();
+  // Handle expiry / max-attempts for every slot first.
   for (int i=0;i<MAX_PENDING;i++) {
     if (!pending[i].active) continue;
     // expiry by age
@@ -268,11 +270,17 @@ void processPendingQueue() {
       markPendingFailed(i, "max_attempts");
       continue;
     }
-    // time to try
+  }
+  // Send at most ONE due command per UNICAST_GAP_MS window. This spaces the
+  // actual radio transmissions (the real point of UNICAST_GAP_MS) without ever
+  // blocking the WiFi/WebSocket stack with delay().
+  if (now - lastSendMs < UNICAST_GAP_MS) return;
+  for (int i=0;i<MAX_PENDING;i++) {
+    if (!pending[i].active) continue;
     if (now >= pending[i].nextTryAt) {
-      // attempt send (non-blocking)
-      trySendPending(i);
-      // do not immediately mark failed; wait for ACK or next cycle
+      trySendPending(i);   // non-blocking
+      lastSendMs = now;
+      break;               // one send per window; rest go next cycle
     }
   }
 }
@@ -557,7 +565,6 @@ void setup() {
 
 // ---------------- Loop ----------------
 unsigned long lastPresenceCheck = 0;
-unsigned long lastPendingProcess = 0;
 unsigned long lastApCheck = 0;
 const unsigned long AP_CHECK_INTERVAL_MS = 10000;
 unsigned long lastHeapLog = 0;
@@ -579,11 +586,10 @@ void loop() {
     }
   }
 
-  // process pending queue periodically (every 1s)
-  if (millis() - lastPendingProcess > 1000) {
-    lastPendingProcess = millis();
-    processPendingQueue();
-  }
+  // Process pending queue every loop: it is self-throttled internally
+  // (one radio send per UNICAST_GAP_MS), so calling it often just lets the
+  // queue flush at the right cadence without blocking.
+  processPendingQueue();
 
   // presence check and status broadcasts
   if (millis() - lastPresenceCheck > 2000) {
@@ -701,7 +707,6 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
               String out; serializeJson(d,out);
               wsSend(num, out);
             }
-            delay(UNICAST_GAP_MS);
             break;
           }
         }
@@ -723,7 +728,6 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
           if (!queued) d["reason"]="queue_full";
           String out; serializeJson(d,out);
           wsSend(num, out);
-          delay(UNICAST_GAP_MS);
         } else {
           StaticJsonDocument<256> d;
           d["type"]="send_result";
@@ -765,7 +769,6 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
           if (!queued) d["reason"]="queue_full";
           String out; serializeJson(d,out);
           wsSend(num, out);
-          delay(UNICAST_GAP_MS);
         }
       }
     }
