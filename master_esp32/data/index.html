@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Master - Interface</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Master - Gestion des accessoires</h1>
+      <div class="controls">
+        <button id="btn-scan" class="small ghost">Scan</button>
+        <button id="btn-force-off-all" class="small ghost">Force Off (Tous)</button>
+        <button id="btn-force-idle-all" class="small ghost">Force Idle (Tous)</button>
+        <button id="btn-force-glitch-all" class="small ghost">Force Glitch (Tous)</button>
+        <button id="btn-time-sync" class="small ghost">Time (sync)</button>
+      </div>
+    </header>
+
+    <div class="card">
+      <div class="toolbar">
+        <!-- groupe de commandes visuel (caché pour compatibilité) -->
+        <div id="cmd-group" class="inline-controls" aria-hidden="true" style="display:none;">
+          <button class="cmd-btn" data-cmd="FORCE_OFF">FORCE_OFF</button>
+          <button class="cmd-btn" data-cmd="FORCE_IDLE">FORCE_IDLE</button>
+          <button class="cmd-btn" data-cmd="FORCE_GLITCH">FORCE_GLITCH</button>
+          <button class="cmd-btn" data-cmd="TIME">TIME</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="accessories">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nom</th>
+              <th>MAC</th>
+              <th>Prés.</th>
+              <th>Mode</th>
+              <th>Batt.</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Rempli dynamiquement par app.js -->
+          </tbody>
+        </table>
+      </div>
+
+      <div id="log" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

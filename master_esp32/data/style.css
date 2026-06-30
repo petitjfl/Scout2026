@@ -1,0 +1,97 @@
+/* style.css - compact UI for Master interface (UTF-8) */
+
+/* Reset basics */
+* { box-sizing: border-box; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+html,body { height:100%; margin:0; background:#f6f7f9; color:#111; }
+
+/* Layout */
+.container { max-width:1100px; margin:14px auto; padding:12px; }
+header { display:flex; align-items:center; gap:12px; margin-bottom:8px; }
+header h1 { font-size:1.05rem; margin:0; font-weight:600; }
+
+/* Controls */
+.controls { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+button { cursor:pointer; border:1px solid #cfcfcf; background:#fff; color:#111; padding:6px 8px; border-radius:6px; font-size:0.85rem; }
+button.small { padding:4px 8px; font-size:0.82rem; border-radius:6px; }
+button.ghost { background:transparent; border-color:#cfcfcf; }
+button.primary { background:#0b66ff; color:#fff; border-color:transparent; }
+
+/* Card */
+.card { background:#fff; border:1px solid #e3e6ea; border-radius:8px; padding:10px; box-shadow:0 1px 0 rgba(0,0,0,0.02); }
+
+/* Toolbar */
+.toolbar { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+
+/* Table */
+.table-wrap { overflow:auto; }
+table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+thead th { text-align:left; font-weight:600; padding:8px 10px; border-bottom:1px solid #e6e9ee; white-space:nowrap; }
+tbody td { padding:6px 10px; border-bottom:1px solid #f0f2f5; vertical-align:middle; }
+tbody tr.muted td { opacity:0.55; }
+.mono { font-family: "Courier New", Courier, monospace; font-size:0.88rem; }
+
+/* Pending badge (compact) */
+.pending-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight:600;
+  color: #7a1f1f;
+  background: linear-gradient(180deg, rgba(250,230,230,0.95), rgba(255,245,245,0.95));
+  border: 1px solid rgba(186,80,80,0.18);
+  border-radius: 999px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+  vertical-align: middle;
+}
+.pending-badge.small {
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  font-weight:600;
+}
+
+/* Presence / status badges */
+.badge { display:inline-block; padding:2px 6px; border-radius:999px; font-size:0.75rem; margin-left:6px; }
+.badge-pending { background:#ffb74d; color:#3b2b00; }
+.badge-online { background:#b9f6ca; color:#003b12; }
+.badge-offline { background:#e0e0e0; color:#333; }
+
+/* Row actions */
+.row-actions { display:flex; gap:6px; align-items:center; }
+.row-actions button { padding:4px 6px; font-size:0.78rem; border-radius:6px; }
+.row-actions .row-info { background:#f3f7ff; border-color:#d6e4ff; }
+.row-actions .row-glitch-lock { background:#fff7e6; border-color:#ffdca8; }
+
+/* Log box - tightened spacing */
+#log {
+  margin-top:10px;
+  background:#0b0f0b;
+  color:#9ef08a;
+  min-height:120px;
+  max-height:260px;
+  overflow:auto;
+  border-radius:6px;
+  padding:6px;
+  font-family: "Courier New", monospace;
+  font-size:0.85rem;
+  line-height:1.05;
+}
+#log > div {
+  margin: 0;
+  padding: 2px 4px;
+  line-height: 1.05;
+  white-space: pre-wrap;
+  border-radius: 3px;
+}
+.log-line {}
+
+/* Responsive tweaks */
+@media (max-width:720px) {
+  header { flex-direction:column; align-items:flex-start; gap:6px; }
+  .controls { width:100%; justify-content:flex-start; }
+  thead th:nth-child(4), tbody td:nth-child(4), thead th:nth-child(6), tbody td:nth-child(6) { display:none; } /* hide Prés. and Batt. on very small screens */
+  .mono { font-size:0.78rem; }
+}
+
+/* Tiny visual helpers */
+.hidden { display:none !important; }
