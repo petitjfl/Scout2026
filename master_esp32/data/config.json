@@ -1,0 +1,13 @@
+{
+  "accessories": [
+    {"id": 1, "name": "Balise_Nord",  "mac": "", "role": "balise"},
+    {"id": 2, "name": "Balise_Sud",   "mac": "", "role": "balise"},
+    {"id": 3, "name": "Balise_Est",   "mac": "", "role": "balise"},
+    {"id": 4, "name": "Balise_Ouest", "mac": "", "role": "balise"},
+    {"id": 5, "name": "Lanterne",     "mac": "", "role": "lanterne"},
+    {"id": 6, "name": "Medaillon",    "mac": "", "role": "medaillon"}
+  ],
+  "ack_timeout_ms": 250,
+  "retries": 3,
+  "unicast_gap_ms": 80
+}
