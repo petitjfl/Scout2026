@@ -1,6 +1,6 @@
 // Master ESP32 - ESP-NOW manager + WebServer + WebSocket + LittleFS
 // Channel forced to 9, UNICAST_GAP_MS = 300
-// Detailed ESP-NOW RX logging and WS send/broadcast wrappers
+// Detailed ESP-NOW RX logging and WS send/broadcast  wrappers
 
 #include <WiFi.h>
 #include <esp_now.h>
