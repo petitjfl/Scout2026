@@ -58,6 +58,12 @@ unsigned long lastHeartbeatSent = 0;
 unsigned long lastReceivedTimeSync = 0;
 uint32_t hbSeq = 0;
 
+// Set from the ESP-NOW recv callback (SYS context) to request an EEPROM write.
+// The actual flash write MUST happen in loop(), never in the callback: writing
+// flash from the WiFi/SYS context can conflict with the stack and crash the
+// ESP8266 ("Soft WDT reset"). loop() flushes this flag via saveState().
+volatile bool stateDirty = false;
+
 const int MAX_PEERS = 12;
 struct PeerInfo { uint8_t id; unsigned long lastSeen; };
 PeerInfo peers[MAX_PEERS];
@@ -229,7 +235,12 @@ void loadState() {
 
 // ---------------- Callbacks ----------------
 void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
-  String msg = String((char*)incomingData);
+  // Bound the copy: don't trust a NUL terminator from the sender.
+  char tmp[251];
+  int n = (len < (int)sizeof(tmp) - 1) ? len : (int)sizeof(tmp) - 1;
+  memcpy(tmp, incomingData, n);
+  tmp[n] = 0;
+  String msg = String(tmp);
   if (DEBUG) {
     char macStr[18];
     sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -296,7 +307,7 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     } else if (cmd == "FORCE_IDLE") {
       setMode(MODE_IDLE, true);
       glitchLock = false;
-      saveState();
+      stateDirty = true; // flush to EEPROM from loop(), not here
       sendAck(mac, "FORCE_IDLE", "OK");
     } else if (cmd == "FORCE_OFF") {
       setMode(MODE_OFF, true);
@@ -304,13 +315,13 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     } else if (cmd == "GLITCH_LOCK") {
       int v = arg.toInt();
       glitchLock = (v != 0);
-      saveState();
+      stateDirty = true; // flush to EEPROM from loop(), not here
       sendAck(mac, "GLITCH_LOCK", "OK");
     } else if (cmd == "TIME") {
       unsigned long epoch = (unsigned long) arg.toInt();
       if (epoch > 1600000000UL) {
         syncedEpoch = epoch; syncedMillis = millis(); lastReceivedTimeSync = millis();
-        saveState();
+        stateDirty = true; // flush to EEPROM from loop(), not here
         sendAck(mac, "TIME", "OK");
       } else sendAck(mac, "TIME", "ERR");
     } else {
@@ -383,6 +394,9 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
+
+  // Flush any EEPROM write requested by the ESP-NOW callback (safe here).
+  if (stateDirty) { stateDirty = false; saveState(); }
 
   // determine day/night and set heartbeat interval accordingly (only when not forced)
   if (!forcedMode) {

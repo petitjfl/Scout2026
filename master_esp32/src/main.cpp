@@ -17,8 +17,7 @@ const uint16_t WS_PORT = 81;
 const uint16_t HTTP_PORT = 80;
 const char* CONFIG_PATH = "/config.json";
 
-unsigned long ACK_TIMEOUT_MS = 250;
-int RETRIES = 3;
+int RETRIES = 3;                    // max send attempts per pending command
 unsigned long UNICAST_GAP_MS = 300; // ms
 
 // Align this with balise WAKE_INTERVAL_S (seconds)
@@ -36,7 +35,6 @@ struct Accessory {
   int batteryMv;
   unsigned long lastAckMs;
   bool present;
-  unsigned long lastBroadcastMs; // throttle HB broadcasts to WS
 };
 Accessory accessories[8];
 int accessoryCount = 0;
@@ -58,10 +56,7 @@ const int MAX_PENDING = 8;
 PendingCmd pending[MAX_PENDING];
 
 const unsigned long PENDING_EXPIRY_MS = 24UL * 3600UL * 1000UL; // 24h max (safety)
-const int PENDING_MAX_ATTEMPTS = 3; // 2-3 windows -> fail after 3 attempts
-
-// Throttle HB broadcasts
-const unsigned long HB_BROADCAST_MIN_MS = 2000; // 2s minimum between broadcasts per accessory
+// Max attempts is driven by the configurable RETRIES value (see processPendingQueue).
 
 // HB batch aggregation
 bool hbDirty = false;
@@ -99,7 +94,6 @@ void saveConfig() {
     it["mac"] = accessories[i].hasMac ? macToStr(accessories[i].mac) : "";
     it["role"] = "balise";
   }
-  doc["ack_timeout_ms"] = ACK_TIMEOUT_MS;
   doc["retries"] = RETRIES;
   doc["unicast_gap_ms"] = UNICAST_GAP_MS;
 
@@ -121,7 +115,6 @@ void loadConfig() {
   DeserializationError err = deserializeJson(doc, f);
   f.close();
   if (err) return;
-  ACK_TIMEOUT_MS = doc["ack_timeout_ms"] | ACK_TIMEOUT_MS;
   RETRIES = doc["retries"] | RETRIES;
   UNICAST_GAP_MS = doc["unicast_gap_ms"] | UNICAST_GAP_MS;
   if (doc.containsKey("accessories")) {
@@ -143,7 +136,6 @@ void loadConfig() {
         accessories[accessoryCount].hasMac = false;
       }
       accessories[accessoryCount].present = false;
-      accessories[accessoryCount].lastBroadcastMs = 0;
       accessoryCount++;
     }
   }
@@ -241,19 +233,6 @@ void markPendingFailed(int slot, const char* reason) {
   pending[slot].active = false;
 }
 
-void markPendingSuccess(int slot) {
-  if (!pending[slot].active) return;
-  StaticJsonDocument<256> d;
-  d["type"]="send_result";
-  d["id"]=pending[slot].targetId;
-  d["cmd"]=pending[slot].cmd;
-  d["ok"]=true;
-  String out; serializeJson(d,out);
-  webSocket.broadcastTXT(out);
-  Serial.printf("Pending id=%d cmd=%s success\n", pending[slot].targetId, pending[slot].cmd.c_str());
-  pending[slot].active = false;
-}
-
 void processPendingQueue() {
   static unsigned long lastSendMs = 0;
   unsigned long now = millis();
@@ -265,8 +244,8 @@ void processPendingQueue() {
       markPendingFailed(i, "expired");
       continue;
     }
-    // max attempts
-    if (pending[i].attempts >= PENDING_MAX_ATTEMPTS) {
+    // max attempts (configurable via RETRIES)
+    if (pending[i].attempts >= RETRIES) {
       markPendingFailed(i, "max_attempts");
       continue;
     }
@@ -365,7 +344,6 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
         for (int j=0;j<6;j++) accessories[idx].mac[j] = 0;
         accessories[idx].hasMac = false;
         accessories[idx].present = false;
-        accessories[idx].lastBroadcastMs = 0;
         Serial.print("New accessory id=");
         Serial.println(id);
       }
@@ -391,6 +369,15 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
 
         // mark dirty for batch broadcast (do not broadcast immediately)
         hbDirty = true;
+
+        // A balise only listens for ~2s right after sending its HB. This HB is
+        // our one reliable signal that it is awake, so push any pending command
+        // for it now instead of waiting for the blind periodic retry.
+        int ps = findPendingSlotForId(id);
+        if (ps != -1 && pending[ps].active) {
+          Serial.printf("HB from id=%d -> pushing pending cmd %s\n", id, pending[ps].cmd.c_str());
+          trySendPending(ps);
+        }
       }
     }
     return;
@@ -536,6 +523,10 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
 // ---------------- HTTP handlers ----------------
 void handleRoot() {
   File f = LittleFS.open("/index.html", "r");
+  if (!f) {
+    server.send(404, "text/plain", "index.html missing (LittleFS not flashed?)");
+    return;
+  }
   server.streamFile(f, "text/html");
   f.close();
 }
@@ -576,7 +567,6 @@ void setup() {
   for (int i=0;i<8;i++) {
     accessories[i].hasMac = false;
     accessories[i].present = false;
-    accessories[i].lastBroadcastMs = 0;
     for (int j=0;j<6;j++) accessories[i].mac[j] = 0;
   }
   for (int i=0;i<MAX_PENDING;i++) {
@@ -639,13 +629,17 @@ void loop() {
   // Process any ESP-NOW packets received in the WiFi-task callback (safe here).
   drainRxQueue();
 
-  // AP watchdog: if AP IP looks invalid, restart softAP
+  // AP watchdog: periodically re-assert WiFi power-save OFF (the single most
+  // important setting for keeping the phone connected). If the AP IP ever
+  // looks invalid, restart softAP as a last resort.
   if (millis() - lastApCheck > AP_CHECK_INTERVAL_MS) {
     lastApCheck = millis();
+    esp_wifi_set_ps(WIFI_PS_NONE); // ensure modem-sleep never creeps back on
     IPAddress apip = WiFi.softAPIP();
     if (apip.toString() == "0.0.0.0") {
       Serial.println("AP appears down, restarting softAP...");
       WiFi.softAP(AP_SSID, AP_PASS, 9);
+      esp_wifi_set_ps(WIFI_PS_NONE); // softAP() may re-enable power-save
       Serial.print("AP restarted, IP: ");
       Serial.println(WiFi.softAPIP());
     }
