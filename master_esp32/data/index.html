@@ -10,48 +10,137 @@
 <body>
   <div class="container">
     <header>
-      <h1>Master - Gestion des accessoires</h1>
+      <h1>Master</h1>
       <div class="controls">
-        <button id="btn-scan" class="small ghost">Scan</button>
-        <button id="btn-force-off-all" class="small ghost">Force Off (Tous)</button>
-        <button id="btn-force-idle-all" class="small ghost">Force Idle (Tous)</button>
-        <button id="btn-force-glitch-all" class="small ghost">Force Glitch (Tous)</button>
-        <button id="btn-time-sync" class="small ghost">Time (sync)</button>
+        <button id="btn-view-prod" class="small primary">Prod</button>
+        <button id="btn-view-dev" class="small ghost">Détaillé</button>
+        <button id="btn-discreet" class="small ghost">Discret</button>
       </div>
     </header>
 
-    <div class="card">
-      <div class="toolbar">
-        <!-- groupe de commandes visuel (caché pour compatibilité) -->
-        <div id="cmd-group" class="inline-controls" aria-hidden="true" style="display:none;">
-          <button class="cmd-btn" data-cmd="FORCE_OFF">FORCE_OFF</button>
-          <button class="cmd-btn" data-cmd="FORCE_IDLE">FORCE_IDLE</button>
-          <button class="cmd-btn" data-cmd="FORCE_GLITCH">FORCE_GLITCH</button>
-          <button class="cmd-btn" data-cmd="TIME">TIME</button>
+    <!-- ============ VUE PROD (par défaut) ============ -->
+    <div id="prod-view">
+      <button id="btn-finale" class="finale-btn">🎆 FINALE — glitch général</button>
+
+      <section class="prod-section">
+        <div class="prod-section-head">
+          <span class="prod-title">Lanterne</span>
+          <span class="prod-count" id="count-lanterne"></span>
         </div>
-      </div>
+        <div class="prod-actions">
+          <button class="prod-btn candle" data-kind="lanterne" data-cmd="FORCE_CANDLE">Bougie</button>
+          <button class="prod-btn white"  data-kind="lanterne" data-cmd="FORCE_WHITE">Blanc</button>
+          <button class="prod-btn alert"  data-kind="lanterne" data-cmd="FORCE_ALERT">Alerte</button>
+          <button class="prod-btn off"    data-kind="lanterne" data-cmd="FORCE_OFF">Éteindre</button>
+        </div>
+      </section>
 
-      <div class="table-wrap">
-        <table id="accessories">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Nom</th>
-              <th>MAC</th>
-              <th>Prés.</th>
-              <th>Mode</th>
-              <th>Batt.</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <!-- Rempli dynamiquement par app.js -->
-          </tbody>
-        </table>
-      </div>
+      <section class="prod-section">
+        <div class="prod-section-head">
+          <span class="prod-title">Balises</span>
+          <span class="prod-count" id="count-balise"></span>
+        </div>
+        <div class="prod-actions">
+          <button class="prod-btn normal" data-kind="balise" data-cmd="FORCE_IDLE">Normal</button>
+          <button class="prod-btn alert"  data-kind="balise" data-cmd="FORCE_GLITCH">Glitch</button>
+          <button class="prod-btn off"    data-kind="balise" data-cmd="FORCE_OFF">Éteindre</button>
+        </div>
+      </section>
 
-      <div id="log" aria-live="polite"></div>
+      <section class="prod-section">
+        <div class="prod-section-head">
+          <span class="prod-title">Médaillon</span>
+          <span class="prod-count" id="count-medaillon"></span>
+        </div>
+        <div class="prod-actions">
+          <button class="prod-btn candle" data-kind="medaillon" data-cmd="TRIGGER">Déclencher</button>
+          <button class="prod-btn off"    data-kind="medaillon" data-cmd="STOP">Arrêter</button>
+        </div>
+      </section>
+
+      <div id="prod-status" class="prod-status" aria-live="polite"></div>
     </div>
+
+    <!-- ============ VUE DÉTAILLÉE (dev / debug) ============ -->
+    <div id="dev-view" class="hidden">
+      <div class="card">
+        <div class="toolbar">
+          <button id="btn-scan" class="small ghost">Scan</button>
+          <button id="btn-force-off-all" class="small ghost">Force Off (Tous)</button>
+          <button id="btn-force-idle-all" class="small ghost">Force Idle (Tous)</button>
+          <button id="btn-force-glitch-all" class="small ghost">Force Glitch (Tous)</button>
+          <button id="btn-time-sync" class="small ghost">Time (sync)</button>
+        </div>
+
+        <div id="lantern-bar" class="lantern-bar">
+          <span class="lantern-bar-label">Lanternes (toutes)</span>
+          <button class="lantern-all candle" data-kind="lanterne" data-cmd="FORCE_CANDLE">Bougie</button>
+          <button class="lantern-all alert"  data-kind="lanterne" data-cmd="FORCE_ALERT">Alerte</button>
+          <button class="lantern-all white"  data-kind="lanterne" data-cmd="FORCE_WHITE">Blanc</button>
+          <button class="lantern-all off"    data-kind="lanterne" data-cmd="FORCE_OFF">Éteint</button>
+        </div>
+
+        <div class="table-wrap">
+          <table id="accessories">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Nom</th>
+                <th>MAC</th>
+                <th>Prés.</th>
+                <th>Mode</th>
+                <th>Batt.</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Rempli dynamiquement par app.js -->
+            </tbody>
+          </table>
+        </div>
+
+        <div id="log" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODE DISCRET (plein écran, sombre mais lisible) ============ -->
+  <div id="stealth-panel" class="stealth-panel hidden" aria-hidden="true">
+    <div class="stealth-head">
+      <span class="stealth-heading">Contrôle</span>
+      <button id="btn-discreet-exit" class="stealth-exit" aria-label="Quitter">Fermer</button>
+    </div>
+
+    <button class="stealth-finale" data-finale="1">FINALE</button>
+
+    <div class="stealth-section">
+      <div class="stealth-label">Lanterne</div>
+      <div class="stealth-row">
+        <button class="stealth-btn" data-kind="lanterne" data-cmd="FORCE_CANDLE">Bougie</button>
+        <button class="stealth-btn" data-kind="lanterne" data-cmd="FORCE_WHITE">Blanc</button>
+        <button class="stealth-btn" data-kind="lanterne" data-cmd="FORCE_ALERT">Alerte</button>
+        <button class="stealth-btn" data-kind="lanterne" data-cmd="FORCE_OFF">Éteint</button>
+      </div>
+    </div>
+
+    <div class="stealth-section">
+      <div class="stealth-label">Balises</div>
+      <div class="stealth-row">
+        <button class="stealth-btn" data-kind="balise" data-cmd="FORCE_IDLE">Normal</button>
+        <button class="stealth-btn" data-kind="balise" data-cmd="FORCE_GLITCH">Glitch</button>
+        <button class="stealth-btn" data-kind="balise" data-cmd="FORCE_OFF">Éteint</button>
+      </div>
+    </div>
+
+    <div class="stealth-section">
+      <div class="stealth-label">Médaillon</div>
+      <div class="stealth-row">
+        <button class="stealth-btn" data-kind="medaillon" data-cmd="TRIGGER">Déclencher</button>
+        <button class="stealth-btn" data-kind="medaillon" data-cmd="STOP">Arrêter</button>
+      </div>
+    </div>
+
+    <div id="stealth-status" class="stealth-status" aria-live="polite"></div>
   </div>
 
   <script src="/app.js"></script>

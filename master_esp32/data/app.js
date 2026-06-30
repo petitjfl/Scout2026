@@ -62,9 +62,103 @@
     'FORCE_GLITCH': 'Mode Glitch',
     'GLITCH_LOCK': 'Verrouillage Glitch',
     'TIME': 'Synchronisation horaire',
-    'FINAL': 'Final'
+    'FINAL': 'Final',
+    // Lanternes
+    'FORCE_CANDLE': 'Bougie',
+    'FORCE_ALERT': 'Alerte',
+    'FORCE_WHITE': 'Blanc chaud',
+    'SETMODE': 'Changer mode'
   };
   function cmdLabel(cmd) { return CMD_LABELS[cmd] || cmd; }
+
+  // --- Accessory type detection (by ID range) ---
+  // Balises 1..9, lanternes 10..19, médaillons 20..29. Keep this aligned with
+  // the DEVICE_ID set in each firmware.
+  function kindForId(id) {
+    id = Number(id);
+    if (id >= 20) return 'medaillon';
+    if (id >= 10) return 'lanterne';
+    return 'balise';
+  }
+  function isLantern(id) { return kindForId(id) === 'lanterne'; } // kept for compat
+  function idsForKind(kind) { return accessories.filter(a => kindForId(a.id) === kind).map(a => a.id); }
+
+  const KIND_LABEL = { balise: 'balise', lanterne: 'lanterne', medaillon: 'médaillon' };
+  const KIND_LABEL_PLURAL = { balise: 'Balises', lanterne: 'Lanternes', medaillon: 'Médaillons' };
+
+  // Numeric mode -> human label, per accessory type.
+  const BALISE_MODES   = { 0: 'Off', 1: 'Idle', 2: 'Glitch' };
+  const LANTERN_MODES  = { 0: 'Éteint', 1: 'Bougie', 2: 'Alerte', 3: 'Blanc' };
+  const MEDAILLON_MODES = { 0: 'Repos', 1: 'Effet' };
+  function modeLabel(id, mode) {
+    if (mode === '' || mode === null || typeof mode === 'undefined') return '';
+    const k = kindForId(id);
+    const map = (k === 'lanterne') ? LANTERN_MODES : (k === 'medaillon') ? MEDAILLON_MODES : BALISE_MODES;
+    const m = Number(mode);
+    return (map[m] !== undefined) ? map[m] : String(mode);
+  }
+
+  function markPending(ids, cmd) {
+    ids.forEach(id => {
+      const idx = accessories.findIndex(a => a.id === id);
+      if (idx !== -1) accessories[idx].pending = { cmd: cmd, nextTryAt: Date.now(), attempts: 0 };
+    });
+    renderAccessories();
+  }
+
+  // Send a command to every device of a given kind (used by prod view, the
+  // discreet panel and the dev lantern bar).
+  function sendToKind(kind, cmd) {
+    const ids = idsForKind(kind);
+    if (!ids.length) {
+      const m = `Aucun ${KIND_LABEL[kind]} détecté`;
+      log(m); prodStatus(m);
+      return false;
+    }
+    const ok = sendAction({ action: 'send', targets: ids, cmd: cmd, arg: '' });
+    if (ok) {
+      const m = `${KIND_LABEL_PLURAL[kind]} → ${cmdLabel(cmd)} (${ids.length})`;
+      log(m); prodStatus(m);
+      markPending(ids, cmd);
+    }
+    return ok;
+  }
+
+  // FINALE: glitch all balises + alert the lantern(s) (FORCE_GLITCH is aliased
+  // to ALERT in the lantern firmware) + fire the médaillon effect — all at once.
+  function triggerFinale() {
+    const lit = accessories
+      .filter(a => { const k = kindForId(a.id); return k === 'balise' || k === 'lanterne'; })
+      .map(a => a.id);
+    const med = idsForKind('medaillon');
+    let any = false;
+    if (lit.length) { sendAction({ action: 'send', targets: lit, cmd: 'FORCE_GLITCH', arg: '' }); markPending(lit, 'FORCE_GLITCH'); any = true; }
+    if (med.length) { sendAction({ action: 'send', targets: med, cmd: 'TRIGGER', arg: '' }); markPending(med, 'TRIGGER'); any = true; }
+    const m = any
+      ? `FINALE déclenchée — ${lit.length} lumière(s) + ${med.length} médaillon(s)`
+      : 'Aucun appareil pour la finale';
+    log(m); prodStatus(m);
+  }
+
+  // Transient status line (shown in prod view and the discreet panel).
+  function prodStatus(msg) {
+    const t = new Date().toLocaleTimeString();
+    ['prod-status', 'stealth-status'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = `[${t}] ${msg}`;
+    });
+  }
+
+  function updateCounts() {
+    ['balise', 'lanterne', 'medaillon'].forEach(k => {
+      const el = document.getElementById('count-' + k);
+      if (!el) return;
+      const list = accessories.filter(a => kindForId(a.id) === k);
+      const online = list.filter(a => a.present).length;
+      el.textContent = list.length ? `${online}/${list.length} en ligne` : 'aucun';
+      el.classList.toggle('count-none', list.length === 0);
+    });
+  }
 
   function log(msg) {
     try {
@@ -259,20 +353,38 @@
         if (!item.present) presenceBadge = `<span class="badge badge-offline">Hors ligne</span>`;
         else presenceBadge = `<span class="badge badge-online">En ligne</span>`;
 
+        // Action buttons depend on the accessory type.
+        const kind = kindForId(item.id);
+        let actionsHtml;
+        if (kind === 'lanterne') {
+          actionsHtml = `
+            <button class="row-cmd lantern candle" data-id="${item.id}" data-cmd="FORCE_CANDLE">Bougie</button>
+            <button class="row-cmd lantern alert" data-id="${item.id}" data-cmd="FORCE_ALERT">Alerte</button>
+            <button class="row-cmd lantern white" data-id="${item.id}" data-cmd="FORCE_WHITE">Blanc</button>
+            <button class="row-cmd lantern off" data-id="${item.id}" data-cmd="FORCE_OFF">Éteint</button>
+            <button class="row-info" data-id="${item.id}">Info</button>`;
+        } else if (kind === 'medaillon') {
+          actionsHtml = `
+            <button class="row-cmd candle" data-id="${item.id}" data-cmd="TRIGGER">Déclencher</button>
+            <button class="row-cmd off" data-id="${item.id}" data-cmd="STOP">Arrêter</button>
+            <button class="row-info" data-id="${item.id}">Info</button>`;
+        } else {
+          actionsHtml = `
+            <button class="row-cmd" data-id="${item.id}" data-cmd="FORCE_OFF">Off</button>
+            <button class="row-cmd" data-id="${item.id}" data-cmd="FORCE_IDLE">Idle</button>
+            <button class="row-cmd" data-id="${item.id}" data-cmd="FORCE_GLITCH">Glitch</button>
+            <button class="row-glitch-lock" data-id="${item.id}" data-locked="${locked}">${lockLabel}</button>
+            <button class="row-info" data-id="${item.id}">Info</button>`;
+        }
+
         tr.innerHTML = `
           <td>${item.id}</td>
           <td>${escapeHtml(item.name || `ID_${item.id}`)} ${pendingHtml}</td>
           <td class="mono">${escapeHtml(mac)}</td>
           <td>${presenceBadge}</td>
-          <td>${item.mode ?? ''}</td>
+          <td>${escapeHtml(String(modeLabel(item.id, item.mode)))}</td>
           <td>${item.batteryMv ?? ''}</td>
-          <td class="row-actions">
-            <button class="row-cmd" data-id="${item.id}" data-cmd="FORCE_OFF">Off</button>
-            <button class="row-cmd" data-id="${item.id}" data-cmd="FORCE_IDLE">Idle</button>
-            <button class="row-cmd" data-id="${item.id}" data-cmd="FORCE_GLITCH">Glitch</button>
-            <button class="row-glitch-lock" data-id="${item.id}" data-locked="${locked}">${lockLabel}</button>
-            <button class="row-info" data-id="${item.id}">Info</button>
-          </td>
+          <td class="row-actions">${actionsHtml}</td>
         `;
         _accessoriesTbody.appendChild(tr);
       });
@@ -289,6 +401,8 @@
         b.removeEventListener('click', onRowInfo);
         b.addEventListener('click', onRowInfo);
       });
+
+      updateCounts();
     } catch (e) {
       console.error('renderAccessories error', e);
     }
@@ -544,6 +658,54 @@
       log(`Envoi TIME (epoch=${epoch}) à tous`);
     });
   }
+
+  // --- Generic kind-action buttons (prod view, dev lantern bar, stealth panel) ---
+  // Every button carrying data-kind + data-cmd sends that command to all devices
+  // of that kind, with a brief tactile confirmation.
+  Array.from(document.querySelectorAll('button[data-kind][data-cmd]')).forEach(b => {
+    b.addEventListener('click', () => {
+      const ok = sendToKind(b.dataset.kind, b.dataset.cmd);
+      b.classList.add('hit');
+      setTimeout(() => b.classList.remove('hit'), 220);
+    });
+  });
+
+  // --- FINALE buttons (prod view + stealth) ---
+  Array.from(document.querySelectorAll('#btn-finale, [data-finale]')).forEach(b => {
+    b.addEventListener('click', () => {
+      triggerFinale();
+      b.classList.add('hit');
+      setTimeout(() => b.classList.remove('hit'), 220);
+    });
+  });
+
+  // --- View toggle: Prod (default) vs Détaillé (dev) ---
+  const prodView = document.getElementById('prod-view');
+  const devView = document.getElementById('dev-view');
+  const btnViewProd = document.getElementById('btn-view-prod');
+  const btnViewDev = document.getElementById('btn-view-dev');
+  function setView(v) {
+    if (prodView) prodView.classList.toggle('hidden', v !== 'prod');
+    if (devView) devView.classList.toggle('hidden', v !== 'dev');
+    if (btnViewProd) { btnViewProd.classList.toggle('primary', v === 'prod'); btnViewProd.classList.toggle('ghost', v !== 'prod'); }
+    if (btnViewDev) { btnViewDev.classList.toggle('primary', v === 'dev'); btnViewDev.classList.toggle('ghost', v !== 'dev'); }
+  }
+  if (btnViewProd) btnViewProd.addEventListener('click', () => setView('prod'));
+  if (btnViewDev) btnViewDev.addEventListener('click', () => setView('dev'));
+  setView('prod'); // default landing
+
+  // --- Discreet (stealth) full-screen mode ---
+  const stealthPanel = document.getElementById('stealth-panel');
+  const btnDiscreet = document.getElementById('btn-discreet');
+  const btnDiscreetExit = document.getElementById('btn-discreet-exit');
+  function setStealth(on) {
+    if (!stealthPanel) return;
+    stealthPanel.classList.toggle('hidden', !on);
+    stealthPanel.setAttribute('aria-hidden', on ? 'false' : 'true');
+    document.body.classList.toggle('stealth', on);
+  }
+  if (btnDiscreet) btnDiscreet.addEventListener('click', () => setStealth(true));
+  if (btnDiscreetExit) btnDiscreetExit.addEventListener('click', () => setStealth(false));
 
   function escapeHtml(s) {
     if (typeof s !== 'string') return s;
