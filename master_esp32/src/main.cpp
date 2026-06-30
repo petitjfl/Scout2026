@@ -295,8 +295,47 @@ void wsBroadcast(String payload) {
   webSocket.broadcastTXT(payload);
 }
 
+// ---------------- ESP-NOW RX queue ----------------
+// The esp_now recv callback runs in the WiFi task. It MUST NOT touch the
+// WebSocket library, LittleFS, or shared state directly (the WebSocket lib is
+// not thread-safe, and racing the main loop corrupts memory -> crash / WiFi
+// drop under load). Instead the callback only copies the raw packet into this
+// SPSC ring; all processing happens in loop() via drainRxQueue().
+struct RxPacket {
+  uint8_t mac[6];
+  uint8_t data[251]; // ESP_NOW_MAX_DATA_LEN (250) + NUL
+  int len;
+};
+const int RX_QUEUE_SIZE = 24;
+static RxPacket rxQueue[RX_QUEUE_SIZE];
+static volatile int rxHead = 0; // producer (WiFi task)
+static volatile int rxTail = 0; // consumer (loop task)
+static volatile int rxCount = 0;
+static volatile uint32_t rxDropped = 0;
+static portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
+
 // ---------------- ESP-NOW callbacks ----------------
+// Runs in WiFi task context: keep it minimal, no WS / flash / String parsing.
 void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  if (len <= 0) return;
+  if (len > (int)sizeof(rxQueue[0].data) - 1) len = sizeof(rxQueue[0].data) - 1;
+  portENTER_CRITICAL(&rxMux);
+  if (rxCount < RX_QUEUE_SIZE) {
+    int slot = rxHead;
+    memcpy(rxQueue[slot].mac, mac, 6);
+    memcpy(rxQueue[slot].data, incomingData, len);
+    rxQueue[slot].data[len] = 0;
+    rxQueue[slot].len = len;
+    rxHead = (rxHead + 1) % RX_QUEUE_SIZE;
+    rxCount++;
+  } else {
+    rxDropped++; // queue full: drop (handled/logged by loop)
+  }
+  portEXIT_CRITICAL(&rxMux);
+}
+
+// Runs in loop() context: safe to call WebSocket, LittleFS, mutate state.
+void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len) {
   String msg = String((char*)incomingData);
   // raw logging
   Serial.printf("ESP-NOW RX raw from %s : %d bytes\n", macToStr(mac).c_str(), len);
@@ -400,6 +439,29 @@ void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   }
 
   // other messages (CMD to master?) - ignore or log
+}
+
+// Drain the ESP-NOW RX ring in loop() context and process each packet safely.
+void drainRxQueue() {
+  static uint32_t lastReportedDropped = 0;
+  for (;;) {
+    RxPacket pkt;
+    bool have = false;
+    portENTER_CRITICAL(&rxMux);
+    if (rxCount > 0) {
+      pkt = rxQueue[rxTail];
+      rxTail = (rxTail + 1) % RX_QUEUE_SIZE;
+      rxCount--;
+      have = true;
+    }
+    portEXIT_CRITICAL(&rxMux);
+    if (!have) break;
+    processRxMessage(pkt.mac, pkt.data, pkt.len);
+  }
+  if (rxDropped != lastReportedDropped) {
+    Serial.printf("WARN: ESP-NOW RX queue overflow, dropped=%lu\n", (unsigned long)rxDropped);
+    lastReportedDropped = rxDropped;
+  }
 }
 
 // onDataSent left as-is for logging
@@ -573,6 +635,9 @@ const unsigned long HEAP_LOG_INTERVAL_MS = 30000;
 void loop() {
   server.handleClient();
   webSocket.loop();
+
+  // Process any ESP-NOW packets received in the WiFi-task callback (safe here).
+  drainRxQueue();
 
   // AP watchdog: if AP IP looks invalid, restart softAP
   if (millis() - lastApCheck > AP_CHECK_INTERVAL_MS) {
