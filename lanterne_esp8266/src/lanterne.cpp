@@ -60,8 +60,15 @@ const float R1 = 100000.0;
 const float R2 = 220000.0;
 
 // ---- Modes ----
-enum Mode { MODE_OFF = 0, MODE_CANDLE = 1, MODE_ALERT = 2, MODE_WHITE = 3 };
+// 0..3 = usage courant ; 4..5 = modes de la finale.
+enum Mode {
+  MODE_OFF = 0, MODE_CANDLE = 1, MODE_ALERT = 2, MODE_WHITE = 3,
+  MODE_REVELATION = 4, // ombres musicales dansantes (phase 2)
+  MODE_WINDIGO = 5     // fondu lent vers le noir puis clignote rouge (phase 3)
+};
+const int MODE_MAX = MODE_WINDIGO;
 volatile Mode currentMode = MODE_CANDLE;
+unsigned long modeStartMs = 0; // horloge d'effet (réinitialisée à chaque commande)
 
 uint8_t broadcastAddress[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
@@ -95,7 +102,7 @@ void loadState() {
   if (magic == EEPROM_MAGIC) {
     uint8_t m = MODE_CANDLE;
     EEPROM.get(4, m);
-    if (m > MODE_WHITE) m = MODE_CANDLE; // guard against garbage
+    if (m > MODE_MAX) m = MODE_CANDLE; // guard against garbage
     currentMode = (Mode)m;
     if (DEBUG) { Serial.print("Loaded mode="); Serial.println((int)currentMode); }
   } else {
@@ -106,6 +113,7 @@ void loadState() {
 }
 
 void setMode(Mode m) {
+  modeStartMs = millis(); // reset effect clock on every command (allows re-trigger)
   if (currentMode == m) return;
   currentMode = m;
   stateDirty = true; // persist new mode (written by loop, not here)
@@ -123,6 +131,36 @@ int readBatteryMv() {
 // ---------------- Effects ----------------
 void effectOff() {
   FastLED.clear();
+  FastLED.show();
+}
+
+// "Révélation" : lueur chaude/mystique qui se déplace autour de l'anneau
+// (les ombres musicales dansent).
+void effectRevelation() {
+  uint32_t t = millis();
+  for (int i = 0; i < NUM_LEDS; i++) {
+    float ph = t / 650.0f + i * 0.95f;
+    float v = (sinf(ph) + 1.0f) / 2.0f;            // 0..1 déphasé par LED
+    CRGB c = blend(CRGB(255, 120, 30), CRGB(120, 0, 150), (uint8_t)(v * 140));
+    c.nscale8_video((uint8_t)(30 + v * 190));
+    leds[i] = c;
+  }
+  FastLED.show();
+}
+
+// "Windigo proche" : fondu lent vers le noir (~4 s) puis clignotement rouge.
+void effectWindigo() {
+  unsigned long dt = millis() - modeStartMs;
+  const unsigned long FADE_MS = 4000;
+  if (dt < FADE_MS) {
+    uint8_t b = 255 - (uint8_t)(255UL * dt / FADE_MS);
+    for (int i = 0; i < NUM_LEDS; i++) { leds[i] = WARM_WHITE; leds[i].nscale8_video(b); }
+  } else {
+    uint32_t t = (dt - FADE_MS) % 900;
+    float v = (sinf((t / 900.0f) * 2.0f * PI - PI / 2.0f) + 1.0f) / 2.0f;
+    uint8_t b = (uint8_t)(15 + v * 230);
+    for (int i = 0; i < NUM_LEDS; i++) { leds[i] = CRGB::Red; leds[i].nscale8_video(b); }
+  }
   FastLED.show();
 }
 
@@ -261,6 +299,10 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     setMode(MODE_ALERT);  sendAck(mac, cmd.c_str(), "OK");
   } else if (cmd == "FORCE_WHITE") {
     setMode(MODE_WHITE);  sendAck(mac, "FORCE_WHITE", "OK");
+  } else if (cmd == "FORCE_REVELATION") {
+    setMode(MODE_REVELATION); sendAck(mac, "FORCE_REVELATION", "OK");
+  } else if (cmd == "FORCE_WINDIGO") {
+    setMode(MODE_WINDIGO);    sendAck(mac, "FORCE_WINDIGO", "OK");
   } else {
     sendAck(mac, cmd.c_str(), "ERR");  // unknown command for a lantern
   }
@@ -294,6 +336,7 @@ void setup() {
   FastLED.show();
 
   loadState();      // restore last mode
+  modeStartMs = millis();
   setupEspNow();
 
   // A lantern is mains/visible: no deep sleep so it always shows light and
@@ -312,11 +355,13 @@ void loop() {
 
   // Render current mode.
   switch (currentMode) {
-    case MODE_OFF:    effectOff();    delay(50); break;
-    case MODE_CANDLE: effectCandle();            break; // self-timed internally
-    case MODE_ALERT:  effectAlert();             break;
-    case MODE_WHITE:  effectWhite();  delay(20); break;
-    default:          effectCandle();            break;
+    case MODE_OFF:        effectOff();    delay(50); break;
+    case MODE_CANDLE:     effectCandle();            break; // self-timed internally
+    case MODE_ALERT:      effectAlert();             break;
+    case MODE_WHITE:      effectWhite();  delay(20); break;
+    case MODE_REVELATION: effectRevelation();        break;
+    case MODE_WINDIGO:    effectWindigo();           break;
+    default:              effectCandle();            break;
   }
 
   delay(2); // keep the ESP8266 cooperative

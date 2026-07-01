@@ -22,6 +22,25 @@
     <div id="prod-view">
       <button id="btn-finale" class="finale-btn">🎆 FINALE — glitch général</button>
 
+      <details class="finale-details">
+        <summary>🎬 Scènes de finale</summary>
+        <div class="scene-grid">
+          <button class="scene-btn" data-scene="prep">1 · Prépa</button>
+          <button class="scene-btn" data-scene="ph2">2 · Installation</button>
+          <button class="scene-btn" data-scene="attaque">3 · Attaque</button>
+          <button class="scene-btn" data-scene="cloche">Cloche → bleu</button>
+          <button class="scene-btn" data-scene="accord">4 · Accord final</button>
+          <button class="scene-btn" data-scene="fin">Fin</button>
+        </div>
+        <div class="alert-block">
+          <div class="alert-block-head">
+            <span>Alerte balises (phase 3) — une par une</span>
+            <button class="scene-btn mini" data-alert-seq="1">Séquence auto</button>
+          </div>
+          <div class="balise-alert-list"></div>
+        </div>
+      </details>
+
       <section class="prod-section">
         <div class="prod-section-head">
           <span class="prod-title">Lanterne</span>
@@ -112,6 +131,23 @@
     </div>
 
     <button class="stealth-finale" data-finale="1">FINALE</button>
+
+    <div class="stealth-section">
+      <div class="stealth-label">Scènes de finale</div>
+      <div class="stealth-row scene-row">
+        <button class="stealth-btn" data-scene="prep">Prépa</button>
+        <button class="stealth-btn" data-scene="ph2">Install.</button>
+        <button class="stealth-btn" data-scene="attaque">Attaque</button>
+        <button class="stealth-btn" data-scene="cloche">Cloche</button>
+        <button class="stealth-btn" data-scene="accord">Accord</button>
+        <button class="stealth-btn" data-scene="fin">Fin</button>
+      </div>
+      <div class="stealth-label" style="margin-top:10px;">Alerte balises</div>
+      <div class="stealth-row">
+        <button class="stealth-btn" data-alert-seq="1">Séquence auto</button>
+      </div>
+      <div class="balise-alert-list stealth-alert-list"></div>
+    </div>
 
     <div class="stealth-section">
       <div class="stealth-label">Lanterne</div>

@@ -166,10 +166,52 @@ Sous Windows, si `pio` n'est pas dans le PATH :
 
 ---
 
-## 8. Reste à faire
+## 8. Finale — modes, effets et scènes (2026-07-01)
 
-- **Firmware du médaillon** (`medaillon_esp8266/` — encore vide) : implémenter
-  l'effet spécial et les commandes `TRIGGER` / `STOP` (à spécifier : son ?
-  animation LED ? vibration ?).
+D'après le déroulé de la finale (4 phases cuées manuellement).
+
+### 8.1 Nouveaux modes firmware
+
+- **Balise** (`3..7`) : `AMBER` (ambre fixe), `BLUE` (bleu stable),
+  `ALERT` (ambre clignotant), `RAINBOW` (arc-en-ciel pulsant),
+  `BLUE_SLOW` (bleu profond, respiration très lente).
+  Commandes : `FORCE_AMBER`, `FORCE_BLUE`, `FORCE_ALERT`, `FORCE_RAINBOW`,
+  `FORCE_BLUE_SLOW` (toutes en mode forcé → balise éveillée).
+- **Lanterne** (`4..5`) : `REVELATION` (ombres dansantes),
+  `WINDIGO` (fondu lent vers le noir puis clignote rouge).
+  Commandes : `FORCE_REVELATION`, `FORCE_WINDIGO`.
+- **Médaillon** (`medaillon_esp8266/` — NOUVEAU firmware) : D1 mini + anneau
+  NeoPixel. Effet `TRIGGER` = comète/dragon chassant sa queue qui change de
+  couleur, montée vers un sommet doré/blanc brillant ; `STOP` = repos.
+
+### 8.2 Interface — panneau « Scènes de finale »
+
+Un bouton par cue (dans la vue Prod, repliable, et dans le mode Discret) :
+
+| Scène | Envois |
+|-------|--------|
+| Prépa | balises `FORCE_AMBER` (réveil), lanterne `FORCE_CANDLE`, médaillon `STOP` |
+| Installation | balises `FORCE_BLUE`, lanterne `FORCE_REVELATION` |
+| Attaque | lanterne `FORCE_WINDIGO` + alertes balises (séquence / individuel) |
+| Cloche | balises `FORCE_BLUE` |
+| Accord final | médaillon `TRIGGER`, balises `FORCE_RAINBOW`, lanterne `FORCE_WHITE` |
+| Fin | balises `FORCE_BLUE_SLOW`, lanterne `FORCE_CANDLE`, médaillon `STOP` |
+
+- **Alerte balises « une par une »** : bouton « Séquence auto » (intervalle fixe)
+  **et** un bouton par balise (tap individuel).
+- Les modes sont affichés en clair dans la vue Détaillé (Ambre, Arc-en-ciel,
+  Windigo, Illumination…).
+
+### 8.3 Contrainte
+
+Les balises doivent être **éveillées** avant la phase 3 : la scène **Prépa** les
+force hors deep-sleep (mode forcé). À lancer en début de finale.
+
+---
+
+## 9. Reste à faire
+
+- **Médaillon** : `NUM_LEDS` réglé à 12 par défaut — ajuster au vrai anneau.
 - Vérifier l'heure locale envoyée par la commande `TIME` (cf. §2).
-- Flasher les 4 balises, la lanterne, et pousser l'UI (`uploadfs`).
+- Affiner les couleurs/effets sur le vrai matériel (bougie, arc-en-ciel, comète…).
+- Flasher les 4 balises, la lanterne, le médaillon, et pousser l'UI (`uploadfs`).

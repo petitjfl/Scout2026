@@ -47,7 +47,15 @@ const int ADC_MAX = 1023;
 const float R1 = 100000.0;
 const float R2 = 220000.0;
 
-enum Mode { MODE_OFF = 0, MODE_IDLE = 1, MODE_GLITCH = 2 };
+// 0..2 = jeu nocturne ; 3..7 = modes de la finale (voir changes.md / déroulé)
+enum Mode {
+  MODE_OFF = 0, MODE_IDLE = 1, MODE_GLITCH = 2,
+  MODE_AMBER = 3,      // ambre fixe (repos avant "confirmation")
+  MODE_BLUE = 4,       // bleu stable (balise qui "tient")
+  MODE_ALERT = 5,      // ambre clignotant (le Windigo teste le périmètre)
+  MODE_RAINBOW = 6,    // arc-en-ciel pulsant (accord final)
+  MODE_BLUE_SLOW = 7   // bleu profond, respiration très lente (fin)
+};
 volatile Mode currentMode = MODE_IDLE;
 volatile bool forcedMode = false;
 volatile bool glitchLock = false;
@@ -138,6 +146,44 @@ void effectGlitch() {
     }
     nextFlashAt = millis() + random(50, 2000);
   }
+}
+
+// ---------------- Effets de la finale ----------------
+const CRGB AMBER_COLOR = CRGB(255, 90, 0);
+
+void effectAmber() { // ambre fixe
+  for (int i=0;i<NUM_LEDS;i++) leds[i] = AMBER_COLOR;
+  FastLED.show();
+}
+
+void effectBlueStable() { // bleu stable, plein
+  for (int i=0;i<NUM_LEDS;i++) leds[i] = CRGB(0, 40, 255);
+  FastLED.show();
+}
+
+void effectAlertBlink() { // ambre clignotant (le Windigo teste le périmètre)
+  bool on = ((millis() / 350) % 2) == 0; // ~1.4 Hz
+  CRGB c = on ? AMBER_COLOR : CRGB::Black;
+  for (int i=0;i<NUM_LEDS;i++) leds[i] = c;
+  FastLED.show();
+}
+
+void effectRainbow() { // arc-en-ciel pulsant (accord final)
+  uint8_t base = (uint8_t)(millis() / 12);           // rotation de teinte
+  float pulse = (sinf(millis() / 500.0f) + 1.0f) / 2.0f;
+  uint8_t bright = (uint8_t)(120 + pulse * 135);
+  for (int i=0;i<NUM_LEDS;i++) {
+    leds[i] = CHSV(base + i * (256 / NUM_LEDS), 255, bright);
+  }
+  FastLED.show();
+}
+
+void effectBlueDeepSlow() { // bleu profond, respiration très lente (fin)
+  float phase = (millis() % 6000) / 6000.0f;         // cycle 6s
+  float val = (sinf(phase * 2.0f * PI - PI/2.0f) + 1.0f) / 2.0f;
+  uint8_t b = (uint8_t)(20 + val * 120);
+  for (int i=0;i<NUM_LEDS;i++) { leds[i] = CRGB(0, 20, 255); leds[i].nscale8_video(b); }
+  FastLED.show();
 }
 
 void sendToMac(const uint8_t *mac, const char* msg) {
@@ -304,6 +350,16 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
     } else if (cmd == "FORCE_GLITCH") {
       setMode(MODE_GLITCH, true);
       sendAck(mac, "FORCE_GLITCH", "OK");
+    } else if (cmd == "FORCE_AMBER") {
+      setMode(MODE_AMBER, true);      sendAck(mac, "FORCE_AMBER", "OK");
+    } else if (cmd == "FORCE_BLUE") {
+      setMode(MODE_BLUE, true);       sendAck(mac, "FORCE_BLUE", "OK");
+    } else if (cmd == "FORCE_ALERT") {
+      setMode(MODE_ALERT, true);      sendAck(mac, "FORCE_ALERT", "OK");
+    } else if (cmd == "FORCE_RAINBOW") {
+      setMode(MODE_RAINBOW, true);    sendAck(mac, "FORCE_RAINBOW", "OK");
+    } else if (cmd == "FORCE_BLUE_SLOW") {
+      setMode(MODE_BLUE_SLOW, true);  sendAck(mac, "FORCE_BLUE_SLOW", "OK");
     } else if (cmd == "FORCE_IDLE") {
       setMode(MODE_IDLE, true);
       glitchLock = false;
@@ -483,13 +539,16 @@ void loop() {
     }
   }
 
-  if (currentMode == MODE_IDLE) {
-    effectIdleBreath(120);
-  } else if (currentMode == MODE_GLITCH) {
-    effectGlitch();
-  } else {
-    FastLED.clear(); FastLED.show();
-    delay(200);
+  switch (currentMode) {
+    case MODE_IDLE:      effectIdleBreath(120); break;
+    case MODE_GLITCH:    effectGlitch();        break;
+    case MODE_AMBER:     effectAmber();         break;
+    case MODE_BLUE:      effectBlueStable();    break;
+    case MODE_ALERT:     effectAlertBlink();    break;
+    case MODE_RAINBOW:   effectRainbow();       break;
+    case MODE_BLUE_SLOW: effectBlueDeepSlow();  break;
+    case MODE_OFF:
+    default:             FastLED.clear(); FastLED.show(); delay(50); break;
   }
 
   delay(10);

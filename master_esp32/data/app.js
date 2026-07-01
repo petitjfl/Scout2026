@@ -67,7 +67,17 @@
     'FORCE_CANDLE': 'Bougie',
     'FORCE_ALERT': 'Alerte',
     'FORCE_WHITE': 'Blanc chaud',
-    'SETMODE': 'Changer mode'
+    'FORCE_REVELATION': 'Révélation',
+    'FORCE_WINDIGO': 'Windigo',
+    'SETMODE': 'Changer mode',
+    // Balises finale
+    'FORCE_AMBER': 'Ambre',
+    'FORCE_BLUE': 'Bleu stable',
+    'FORCE_RAINBOW': 'Arc-en-ciel',
+    'FORCE_BLUE_SLOW': 'Bleu profond',
+    // Médaillon
+    'TRIGGER': 'Déclencher',
+    'STOP': 'Arrêter'
   };
   function cmdLabel(cmd) { return CMD_LABELS[cmd] || cmd; }
 
@@ -87,9 +97,14 @@
   const KIND_LABEL_PLURAL = { balise: 'Balises', lanterne: 'Lanternes', medaillon: 'Médaillons' };
 
   // Numeric mode -> human label, per accessory type.
-  const BALISE_MODES   = { 0: 'Off', 1: 'Idle', 2: 'Glitch' };
-  const LANTERN_MODES  = { 0: 'Éteint', 1: 'Bougie', 2: 'Alerte', 3: 'Blanc' };
-  const MEDAILLON_MODES = { 0: 'Repos', 1: 'Effet' };
+  const BALISE_MODES = {
+    0: 'Off', 1: 'Idle', 2: 'Glitch',
+    3: 'Ambre', 4: 'Bleu', 5: 'Alerte', 6: 'Arc-en-ciel', 7: 'Bleu profond'
+  };
+  const LANTERN_MODES = {
+    0: 'Éteint', 1: 'Bougie', 2: 'Alerte', 3: 'Blanc', 4: 'Révélation', 5: 'Windigo'
+  };
+  const MEDAILLON_MODES = { 0: 'Repos', 1: 'Illumination' };
   function modeLabel(id, mode) {
     if (mode === '' || mode === null || typeof mode === 'undefined') return '';
     const k = kindForId(id);
@@ -140,6 +155,87 @@
     log(m); prodStatus(m);
   }
 
+  // Send a command to an explicit list of ids (used by the finale scenes).
+  function sendCmdToIds(ids, cmd) {
+    if (!ids.length) return false;
+    const ok = sendAction({ action: 'send', targets: ids, cmd: cmd, arg: '' });
+    if (ok) markPending(ids, cmd);
+    return ok;
+  }
+
+  // --- Finale scenes: one tap sets every device group to its phase state ---
+  const SCENES = {
+    prep: () => {
+      sendCmdToIds(idsForKind('balise'), 'FORCE_AMBER');   // réveille + ambre
+      sendCmdToIds(idsForKind('lanterne'), 'FORCE_CANDLE');
+      sendCmdToIds(idsForKind('medaillon'), 'STOP');
+      prodStatus('Scène — Préparation : balises éveillées (ambre), lanterne dorée');
+    },
+    ph2: () => {
+      sendCmdToIds(idsForKind('balise'), 'FORCE_BLUE');
+      sendCmdToIds(idsForKind('lanterne'), 'FORCE_REVELATION');
+      prodStatus('Scène — Installation : balises bleu stable, lanterne en révélation');
+    },
+    attaque: () => {
+      sendCmdToIds(idsForKind('lanterne'), 'FORCE_WINDIGO');
+      prodStatus('Scène — Attaque : lanterne windigo. Déclenche les alertes balises (séquence / individuel).');
+    },
+    cloche: () => {
+      sendCmdToIds(idsForKind('balise'), 'FORCE_BLUE');
+      prodStatus('Scène — Cloche : toutes les balises reviennent en bleu');
+    },
+    accord: () => {
+      sendCmdToIds(idsForKind('medaillon'), 'TRIGGER');
+      sendCmdToIds(idsForKind('balise'), 'FORCE_RAINBOW');
+      sendCmdToIds(idsForKind('lanterne'), 'FORCE_WHITE');
+      prodStatus('Scène — Accord final : médaillon illumine, balises arc-en-ciel, lanterne blanche');
+    },
+    fin: () => {
+      sendCmdToIds(idsForKind('balise'), 'FORCE_BLUE_SLOW');
+      sendCmdToIds(idsForKind('lanterne'), 'FORCE_CANDLE');
+      sendCmdToIds(idsForKind('medaillon'), 'STOP');
+      prodStatus('Scène — Fin : balises bleu profond lent, lanterne dorée');
+    }
+  };
+  function runScene(name) { const fn = SCENES[name]; if (fn) { fn(); log('Scène finale : ' + name); } }
+
+  // Balises in alert one-by-one, with a fixed interval (mains-free option).
+  let alertSeqTimers = [];
+  function cancelAlertSeq() { alertSeqTimers.forEach(clearTimeout); alertSeqTimers = []; }
+  function baliseAlertSequence(intervalMs = 2500) {
+    const ids = idsForKind('balise');
+    if (!ids.length) { prodStatus('Aucune balise pour la séquence d\'alerte'); return; }
+    cancelAlertSeq();
+    ids.forEach((id, k) => {
+      const t = setTimeout(() => {
+        sendCmdToIds([id], 'FORCE_ALERT');
+        prodStatus(`Alerte : ${nameForId(id)} (${k + 1}/${ids.length})`);
+      }, k * intervalMs);
+      alertSeqTimers.push(t);
+    });
+    prodStatus(`Séquence d'alerte lancée : ${ids.length} balises, ${intervalMs / 1000}s d'écart`);
+  }
+
+  // Populate the per-balise alert buttons (individual tap) in every list container.
+  function renderBaliseAlertButtons() {
+    const ids = idsForKind('balise');
+    Array.from(document.querySelectorAll('.balise-alert-list')).forEach(c => {
+      c.innerHTML = '';
+      if (!ids.length) { c.textContent = 'aucune balise'; return; }
+      ids.forEach(id => {
+        const b = document.createElement('button');
+        b.className = 'alert-mini';
+        b.textContent = nameForId(id);
+        b.addEventListener('click', () => {
+          sendCmdToIds([id], 'FORCE_ALERT');
+          prodStatus(`${nameForId(id)} en alerte`);
+          b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 220);
+        });
+        c.appendChild(b);
+      });
+    });
+  }
+
   // Transient status line (shown in prod view and the discreet panel).
   function prodStatus(msg) {
     const t = new Date().toLocaleTimeString();
@@ -158,6 +254,7 @@
       el.textContent = list.length ? `${online}/${list.length} en ligne` : 'aucun';
       el.classList.toggle('count-none', list.length === 0);
     });
+    renderBaliseAlertButtons();
   }
 
   function log(msg) {
@@ -674,6 +771,23 @@
   Array.from(document.querySelectorAll('#btn-finale, [data-finale]')).forEach(b => {
     b.addEventListener('click', () => {
       triggerFinale();
+      b.classList.add('hit');
+      setTimeout(() => b.classList.remove('hit'), 220);
+    });
+  });
+
+  // --- Finale scene buttons (prod view + stealth) ---
+  Array.from(document.querySelectorAll('[data-scene]')).forEach(b => {
+    b.addEventListener('click', () => {
+      runScene(b.dataset.scene);
+      b.classList.add('hit');
+      setTimeout(() => b.classList.remove('hit'), 220);
+    });
+  });
+  // --- Balise alert auto-sequence buttons ---
+  Array.from(document.querySelectorAll('[data-alert-seq]')).forEach(b => {
+    b.addEventListener('click', () => {
+      baliseAlertSequence();
       b.classList.add('hit');
       setTimeout(() => b.classList.remove('hit'), 220);
     });
