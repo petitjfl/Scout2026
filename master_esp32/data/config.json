@@ -4,10 +4,10 @@
     {"id": 2, "name": "Balise_Sud",   "mac": "", "role": "balise"},
     {"id": 3, "name": "Balise_Est",   "mac": "", "role": "balise"},
     {"id": 4, "name": "Balise_Ouest", "mac": "", "role": "balise"},
-    {"id": 5, "name": "Lanterne",     "mac": "", "role": "lanterne"},
-    {"id": 6, "name": "Medaillon",    "mac": "", "role": "medaillon"}
+    {"id": 10, "name": "Lanterne_1",  "mac": "", "role": "lanterne"},
+    {"id": 20, "name": "Medaillon_1", "mac": "", "role": "medaillon"}
   ],
   "ack_timeout_ms": 250,
   "retries": 3,
-  "unicast_gap_ms": 80
+  "unicast_gap_ms": 300
 }
