@@ -235,22 +235,60 @@ Prop **autonome** (pas d'ESP-NOW) sur **Digispark (ATtiny85)**. Lit des cartes R
 - « true » → **vibration propre** (trois pulsations douces, « vibre juste »),
 - « false » → **bourdonnement laid** (vibration hachée, dissonante).
 
-État : la **logique verdict→vibration est complète et compile** (Flash 19 %, RAM 2 %).
-Démarre en **MODE TEST** (bouton sur P0 : appui court = true, appui long = false)
-pour valider la vibration au banc. La **lecture RFID reste à intégrer** derrière
-`pollVerdict()` (passer `DIAPASON_TEST` à 0).
+Deux sources de verdict, **l'IR prioritaire** :
+1. **RFID PN532 en I2C** (I2C logiciel maison, pilote PN532 minimal) : détecte la
+   carte, lit une page NTAG et cherche le texte « true »/« false ».
+2. **Override télécommande IR (NEC)** : BACKUP si le RFID ne marche pas, prioritaire.
 
-Contraintes ATtiny85 (~6 Ko flash, pas de vrai SPI) : selon le module RFID final,
-soit **PN532 en I2C** (2 broches, léger), soit **RC522** via un pilote USI maison
-(RST relié à VCC). Si ça déborde, passer sur **Digispark Pro** (ATtiny167, 14 Ko).
-Câblage : moteur sur P4 (via transistor + diode), RFID sur P0..P3.
+État : **compile** (Flash 50 %, RAM 6 % → ~3 Ko libres). La partie **PN532 est
+non testée sur matériel** (à valider/ajuster au banc) ; l'IR est le filet fiable.
+Flags `USE_PN532` / `USE_IR` pour activer/désactiver chaque source.
+
+#### Câblage (Digispark ATtiny85 — P5 = reset, à éviter)
+
+| Broche | Rôle | Détail |
+|--------|------|--------|
+| **P0** | I2C **SDA** → PN532 | pull-ups présents sur la carte PN532 |
+| **P2** | I2C **SCL** → PN532 | " |
+| **P3** | sortie **récepteur IR** | TSOP38238 / VS1838B (38 kHz), 3 fils (VCC/GND/OUT) |
+| **P4** | **moteur** de vibration | via **transistor** (NPN/MOSFET) + **diode** de roue libre |
+| **P1** | LED interne | état / guidage apprentissage |
+| P5 | (reset) | ne pas utiliser |
+
+- **PN532** : à mettre en mode **I2C** (cavalier/switch selon le modèle), alimenté
+  en 3V3 ou 5V selon la carte, SDA→P0, SCL→P2, GND commun.
+- **Moteur** : ne JAMAIS le brancher direct sur la broche (courant + retour de
+  tension) → transistor commandé par P4, moteur sur l'alim, diode en parallèle.
+- **Récepteur IR** : OUT→P3, alim 3V3/5V, GND commun.
+
+#### Télécommande IR — apprentissage (pas de code à connaître)
+
+Les codes NEC sont **appris et mémorisés en EEPROM** (les mini-télécommandes
+identiques ont parfois des codes différents, donc pas de valeurs en dur) :
+- **1er démarrage** (EEPROM vierge) → mode apprentissage automatique.
+- **Ré-apprendre plus tard** : presser **n'importe quelle touche dans les 2,5 s**
+  après la mise sous tension.
+- Déroulé : la LED clignote **lentement** → presse ta touche « **vrai** » (vibration
+  propre de confirmation), puis clignote **vite** → presse ta touche « **faux** »
+  (bourdonnement de confirmation). C'est mémorisé.
+
+#### Diagnostic au démarrage (LED interne)
+
+À la mise sous tension, après le « bip » du moteur, la LED indique l'état du PN532 :
+- **2 clignotements lents** = PN532 détecté (I2C OK).
+- **6 clignotements rapides** = PN532 absent/non répondant → on compte sur l'IR.
+
+⚠️ **Réserve LED** : sur la plupart des Digispark la LED interne est sur **P1**
+(ce qu'on utilise). Sur certains clones elle est sur **P0** — or P0 = SDA ici. Si
+la LED reste éteinte/incohérente, c'est probablement ce cas : déplacer alors la LED
+d'état (`LED_PIN`) sur une autre broche libre, ou ignorer le diagnostic.
 
 ---
 
 ## 9. Reste à faire
 
-- **Diapason** : intégrer la lecture RFID réelle dans `pollVerdict()` (module + lib
-  à confirmer : PN532 I2C recommandé), puis `DIAPASON_TEST = 0`.
+- **Diapason** : valider le pilote PN532 sur matériel (partie non testée). L'IR est
+  déjà autonome (apprentissage EEPROM, aucun code à saisir).
 - **Médaillon** : `NUM_LEDS` réglé à 12 par défaut — ajuster au vrai anneau.
 - Vérifier l'heure locale envoyée par la commande `TIME` (cf. §2).
 - Affiner les couleurs/effets sur le vrai matériel (bougie, arc-en-ciel, comète…).
