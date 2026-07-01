@@ -13,6 +13,9 @@
 #define DEBUG_MODE true   // true = dev (serial on, no sleep). false = prod (serial off, sleep enabled)
 
 const bool DEBUG = DEBUG_MODE;
+// Deep-sleep = LE JOUR seulement (économie batterie, les balises ne servent pas).
+// La NUIT elles restent éveillées et allumées faiblement pour "veiller" sur les
+// tentes, et rester réactives (la finale se joue le soir). La batterie tient 24 h.
 const bool USE_DEEP_SLEEP = !DEBUG;
 
 #define WIFI_CHANNEL 9  // FORCED CHANNEL
@@ -47,15 +50,20 @@ const int ADC_MAX = 1023;
 const float R1 = 100000.0;
 const float R2 = 220000.0;
 
-// 0..2 = jeu nocturne ; 3..7 = modes de la finale (voir changes.md / déroulé)
+// 0..2 = jeu nocturne ; 3..8 = modes de la finale (voir changes.md / déroulé)
 enum Mode {
   MODE_OFF = 0, MODE_IDLE = 1, MODE_GLITCH = 2,
   MODE_AMBER = 3,      // ambre fixe (repos avant "confirmation")
   MODE_BLUE = 4,       // bleu stable (balise qui "tient")
   MODE_ALERT = 5,      // ambre clignotant (le Windigo teste le périmètre)
   MODE_RAINBOW = 6,    // arc-en-ciel pulsant (accord final)
-  MODE_BLUE_SLOW = 7   // bleu profond, respiration très lente (fin)
+  MODE_BLUE_SLOW = 7,  // bleu profond, respiration très lente (fin)
+  MODE_RECHARGE = 8    // flash blanc bref "rechargé par la Cloche" -> revient au bleu
 };
+
+// Luminosité de la veille nocturne (bleu pulsant faible, visible des tentes).
+const uint8_t NIGHT_BRIGHTNESS = 45;
+unsigned long modeStartMs = 0; // horloge d'effet (réinitialisée à chaque setMode)
 volatile Mode currentMode = MODE_IDLE;
 volatile bool forcedMode = false;
 volatile bool glitchLock = false;
@@ -84,7 +92,21 @@ unsigned long nowEpoch() {
   return syncedEpoch + delta;
 }
 
+// Nuit = ~20h35 -> 5h30. Sans heure synchronisée, on suppose la nuit (la balise
+// reste alors allumée/veille plutôt que de dormir et d'être éteinte au mauvais moment).
+bool isNightNow() {
+  bool haveTime = (syncedEpoch != 0) && ((millis() - lastReceivedTimeSync) <= TIME_SYNC_TIMEOUT_MS);
+  if (!haveTime) return true;
+  time_t t = (time_t) nowEpoch();
+  struct tm *tm = gmtime(&t);
+  int hour = tm->tm_hour, min = tm->tm_min;
+  if (hour > 20 || (hour == 20 && min >= 35)) return true;
+  if (hour < 5  || (hour == 5  && min < 30)) return true;
+  return false;
+}
+
 void setMode(Mode m, bool force=false) {
+  modeStartMs = millis();
   if (!force && currentMode == m) return;
   currentMode = m;
   forcedMode = force;
@@ -183,6 +205,19 @@ void effectBlueDeepSlow() { // bleu profond, respiration très lente (fin)
   float val = (sinf(phase * 2.0f * PI - PI/2.0f) + 1.0f) / 2.0f;
   uint8_t b = (uint8_t)(20 + val * 120);
   for (int i=0;i<NUM_LEDS;i++) { leds[i] = CRGB(0, 20, 255); leds[i].nscale8_video(b); }
+  FastLED.show();
+}
+
+// Flash blanc bref ("rechargée par la Cloche", soir 5) puis retour auto au bleu.
+void effectRecharge() {
+  const unsigned long DUR = 1600;
+  unsigned long dt = millis() - modeStartMs;
+  if (dt >= DUR) { setMode(MODE_BLUE, true); return; } // revient au bleu stable
+  float x = (float)dt / DUR;                            // 0..1
+  float env = (x < 0.15f) ? (x / 0.15f) : (1.0f - (x - 0.15f) / 0.85f); // pic à 15%
+  CRGB c = blend(CRGB(0, 40, 255), CRGB(255, 255, 255), (uint8_t)(env * 255));
+  c.nscale8_video((uint8_t)(60 + env * 195));
+  for (int i=0;i<NUM_LEDS;i++) leds[i] = c;
   FastLED.show();
 }
 
@@ -360,6 +395,8 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
       setMode(MODE_RAINBOW, true);    sendAck(mac, "FORCE_RAINBOW", "OK");
     } else if (cmd == "FORCE_BLUE_SLOW") {
       setMode(MODE_BLUE_SLOW, true);  sendAck(mac, "FORCE_BLUE_SLOW", "OK");
+    } else if (cmd == "FORCE_RECHARGE") {
+      setMode(MODE_RECHARGE, true);   sendAck(mac, "FORCE_RECHARGE", "OK");
     } else if (cmd == "FORCE_IDLE") {
       setMode(MODE_IDLE, true);
       glitchLock = false;
@@ -434,18 +471,10 @@ void setup() {
   lastHeartbeatSent = 0;
   lastReceivedTimeSync = 0;
 
-  // configure sleep behavior derived from DEBUG_MODE
-  if (!DEBUG) {
-    if (USE_DEEP_SLEEP) {
-      if (DEBUG) Serial.println("Production: deep sleep enabled");
-    } else {
-      WiFi.setSleepMode(WIFI_LIGHT_SLEEP);
-      if (DEBUG) Serial.println("Production: light sleep enabled");
-    }
-  } else {
-    HEARTBEAT_INTERVAL_MS = 3000;
-    if (DEBUG) Serial.println("Dev mode: sleep disabled, HB every 3s");
-  }
+  // Quand elle est éveillée (la nuit / en finale) : radio sans veille pour un
+  // ESP-NOW réactif et des LEDs stables. Le jour, la boucle repasse en deep-sleep.
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  HEARTBEAT_INTERVAL_MS = 5000;
 }
 
 void loop() {
@@ -454,46 +483,26 @@ void loop() {
   // Flush any EEPROM write requested by the ESP-NOW callback (safe here).
   if (stateDirty) { stateDirty = false; saveState(); }
 
-  // determine day/night and set heartbeat interval accordingly (only when not forced)
-  if (!forcedMode) {
-    unsigned long epochNow = nowEpoch();
-    bool haveTime = (syncedEpoch != 0) && ((millis() - lastReceivedTimeSync) <= TIME_SYNC_TIMEOUT_MS);
-    bool isNight = true;
-    if (haveTime) {
-      time_t t = (time_t) epochNow;
-      struct tm *tm = gmtime(&t);
-      int hour = tm->tm_hour; int min = tm->tm_min;
-      if (hour > 20 || (hour == 20 && min >= 35)) isNight = true;
-      else if (hour < 5 || (hour == 5 && min < 30)) isNight = true;
-      else isNight = false;
-    } else {
-      isNight = true;
-    }
+  bool night = isNightNow();
 
-    if (DEBUG) {
-      HEARTBEAT_INTERVAL_MS = 3000;
-    } else {
-      HEARTBEAT_INTERVAL_MS = isNight ? HB_NIGHT_MS : HB_DAY_MS;
-    }
-  }
+  // HB régulier (balise éveillée) pour rester "présente" côté master.
+  HEARTBEAT_INTERVAL_MS = 5000;
 
-  // If using deep sleep mode, implement wake-window cycle:
-  if (!DEBUG && USE_DEEP_SLEEP && !forcedMode) {
-    // On wake (normal loop after boot), send HB and listen for WAKE_WINDOW_MS, then deepSleep
+  // Deep-sleep UNIQUEMENT le jour (et jamais en mode forcé / finale). La nuit,
+  // la balise reste éveillée pour veiller (bleu faible) et répondre en temps réel.
+  if (!DEBUG && USE_DEEP_SLEEP && !forcedMode && !night) {
+    // Réveil : HB, on écoute WAKE_WINDOW_MS, puis on se rendort.
     sendHeartbeat();
     unsigned long start = millis();
-    // listen for commands during wake window
     while (millis() - start < WAKE_WINDOW_MS) {
-      // espnow callbacks will run asynchronously
-      delay(10);
+      delay(10); // les callbacks ESP-NOW tournent en asynchrone
     }
-    // persist state before sleeping
     saveState();
-    if (DEBUG) Serial.println("Entering deep sleep...");
+    if (DEBUG) Serial.println("Jour : entrée en deep sleep...");
     ESP.deepSleep(WAKE_INTERVAL_S * 1000000ULL);
-    // does not return
+    // ne revient pas
   } else {
-    // Normal (no deep sleep): periodic heartbeat based on HEARTBEAT_INTERVAL_MS
+    // Éveillée : heartbeat périodique.
     if (now - lastHeartbeatSent >= HEARTBEAT_INTERVAL_MS) sendHeartbeat();
   }
 
@@ -510,25 +519,8 @@ void loop() {
   }
 
   if (!forcedMode) {
-    unsigned long epochNow = nowEpoch();
-    bool haveTime = (syncedEpoch != 0) && ((millis() - lastReceivedTimeSync) <= TIME_SYNC_TIMEOUT_MS);
-    bool isNight = true;
-    if (haveTime) {
-      time_t t = (time_t) epochNow;
-      struct tm *tm = gmtime(&t);
-      int hour = tm->tm_hour; int min = tm->tm_min;
-      if (hour > 20 || (hour == 20 && min >= 35)) isNight = true;
-      else if (hour < 5 || (hour == 5 && min < 30)) isNight = true;
-      else isNight = false;
-    } else {
-      isNight = true;
-    }
-
-    if (isNight) {
-      setMode(MODE_IDLE, false);
-    } else {
-      setMode(MODE_OFF, false);
-    }
+    // Nuit -> veille bleu faible ; jour -> éteinte (et de toute façon en deep-sleep).
+    setMode(night ? MODE_IDLE : MODE_OFF, false);
   }
 
   if (currentMode == MODE_GLITCH && !forcedMode) {
@@ -540,13 +532,14 @@ void loop() {
   }
 
   switch (currentMode) {
-    case MODE_IDLE:      effectIdleBreath(120); break;
+    case MODE_IDLE:      effectIdleBreath(NIGHT_BRIGHTNESS); break; // veille faible
     case MODE_GLITCH:    effectGlitch();        break;
     case MODE_AMBER:     effectAmber();         break;
     case MODE_BLUE:      effectBlueStable();    break;
     case MODE_ALERT:     effectAlertBlink();    break;
     case MODE_RAINBOW:   effectRainbow();       break;
     case MODE_BLUE_SLOW: effectBlueDeepSlow();  break;
+    case MODE_RECHARGE:  effectRecharge();      break;
     case MODE_OFF:
     default:             FastLED.clear(); FastLED.show(); delay(50); break;
   }

@@ -202,15 +202,55 @@ Un bouton par cue (dans la vue Prod, repliable, et dans le mode Discret) :
 - Les modes sont affichés en clair dans la vue Détaillé (Ambre, Arc-en-ciel,
   Windigo, Illumination…).
 
-### 8.3 Contrainte
+### 8.3 Modèle d'alimentation des balises (révisé)
 
-Les balises doivent être **éveillées** avant la phase 3 : la scène **Prépa** les
-force hors deep-sleep (mode forcé). À lancer en début de finale.
+- **Nuit** (~20h35 → 5h30) : la balise reste **éveillée** et allumée **faiblement**
+  (bleu pulsant, `NIGHT_BRIGHTNESS = 45`) pour « veiller » sur les tentes, et
+  répondre en temps réel (la finale se joue le soir). Plus de fenêtre de 2 s.
+- **Jour** : **deep-sleep** (économie batterie, les balises ne servent pas).
+- **Mode forcé (finale)** : jamais de sleep, quelle que soit l'heure.
+- Batterie : ~24 h sur une charge (recharge quotidienne). Sans heure synchronisée,
+  la balise suppose la **nuit** (reste allumée plutôt que de dormir au mauvais moment).
+
+### 8.4 Effet « Recharge » (soir 5)
+
+Nouveau mode balise `RECHARGE (8)` / commande `FORCE_RECHARGE` : flash blanc bref
+(« rechargée par la Cloche ») puis **retour automatique au bleu stable**. Exposé
+dans la vue Prod (section Balises → bouton « Recharge »).
+
+### 8.5 Décisions logistiques (finale)
+
+- **Audio** = manuel, géré par les aides de camp (pas piloté par le master).
+- **UV** : le Miroir de Brume **est** UV (pas de lampe séparée à coder).
+- **Diapason** = capteur RFID autonome (cartes true/false) + micro-vibreur — **hors
+  réseau** (rien côté master), mais **firmware dédié** créé : voir §8.6.
+- **Corde des Liens** = fil lumineux **manuel**, hors réseau.
+- **Pas de bouton de sécurité « Lumière »** dans l'UI : les commandos se déroulent
+  **hors du camp**, sans accès au master.
+
+### 8.6 Diapason des Sentiers (`diapason_digispark/` — NOUVEAU)
+
+Prop **autonome** (pas d'ESP-NOW) sur **Digispark (ATtiny85)**. Lit des cartes RFID
+« true/false » cachées dans les indices et répond par le **moteur de vibration** :
+- « true » → **vibration propre** (trois pulsations douces, « vibre juste »),
+- « false » → **bourdonnement laid** (vibration hachée, dissonante).
+
+État : la **logique verdict→vibration est complète et compile** (Flash 19 %, RAM 2 %).
+Démarre en **MODE TEST** (bouton sur P0 : appui court = true, appui long = false)
+pour valider la vibration au banc. La **lecture RFID reste à intégrer** derrière
+`pollVerdict()` (passer `DIAPASON_TEST` à 0).
+
+Contraintes ATtiny85 (~6 Ko flash, pas de vrai SPI) : selon le module RFID final,
+soit **PN532 en I2C** (2 broches, léger), soit **RC522** via un pilote USI maison
+(RST relié à VCC). Si ça déborde, passer sur **Digispark Pro** (ATtiny167, 14 Ko).
+Câblage : moteur sur P4 (via transistor + diode), RFID sur P0..P3.
 
 ---
 
 ## 9. Reste à faire
 
+- **Diapason** : intégrer la lecture RFID réelle dans `pollVerdict()` (module + lib
+  à confirmer : PN532 I2C recommandé), puis `DIAPASON_TEST = 0`.
 - **Médaillon** : `NUM_LEDS` réglé à 12 par défaut — ajuster au vrai anneau.
 - Vérifier l'heure locale envoyée par la commande `TIME` (cf. §2).
 - Affiner les couleurs/effets sur le vrai matériel (bougie, arc-en-ciel, comète…).

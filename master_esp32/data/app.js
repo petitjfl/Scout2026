@@ -75,6 +75,7 @@
     'FORCE_BLUE': 'Bleu stable',
     'FORCE_RAINBOW': 'Arc-en-ciel',
     'FORCE_BLUE_SLOW': 'Bleu profond',
+    'FORCE_RECHARGE': 'Recharge (flash blanc)',
     // Médaillon
     'TRIGGER': 'Déclencher',
     'STOP': 'Arrêter'
@@ -99,7 +100,7 @@
   // Numeric mode -> human label, per accessory type.
   const BALISE_MODES = {
     0: 'Off', 1: 'Idle', 2: 'Glitch',
-    3: 'Ambre', 4: 'Bleu', 5: 'Alerte', 6: 'Arc-en-ciel', 7: 'Bleu profond'
+    3: 'Ambre', 4: 'Bleu', 5: 'Alerte', 6: 'Arc-en-ciel', 7: 'Bleu profond', 8: 'Recharge'
   };
   const LANTERN_MODES = {
     0: 'Éteint', 1: 'Bougie', 2: 'Alerte', 3: 'Blanc', 4: 'Révélation', 5: 'Windigo'
