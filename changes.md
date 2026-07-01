@@ -236,30 +236,39 @@ Prop **autonome** (pas d'ESP-NOW) sur **Digispark (ATtiny85)**. Lit des cartes R
 - « false » → **bourdonnement laid** (vibration hachée, dissonante).
 
 Deux sources de verdict, **l'IR prioritaire** :
-1. **RFID PN532 en I2C** (I2C logiciel maison, pilote PN532 minimal) : détecte la
-   carte, lit une page NTAG et cherche le texte « true »/« false ».
+1. **RFID RC522 en SPI** (SPI **logiciel** maison, pilote RC522 minimal) : détecte
+   la carte, la sélectionne, lit une page NTAG/Ultralight et cherche « true »/« false ».
 2. **Override télécommande IR (NEC)** : BACKUP si le RFID ne marche pas, prioritaire.
 
-État : **compile** (Flash 50 %, RAM 6 % → ~3 Ko libres). La partie **PN532 est
-non testée sur matériel** (à valider/ajuster au banc) ; l'IR est le filet fiable.
-Flags `USE_PN532` / `USE_IR` pour activer/désactiver chaque source.
+État : **compile** (Flash 47 %, RAM 5 %). La partie **RC522 est non testée sur
+matériel** (SPI logiciel + partage de broche = délicat, à valider au banc) ; l'IR
+est le filet fiable. Cartes **NTAG/Ultralight** (texte NDEF) supportées ; **MIFARE
+Classic** nécessiterait une authentification (non gérée). Flags `USE_RC522` / `USE_IR`.
 
 #### Câblage (Digispark ATtiny85 — P5 = reset, à éviter)
 
+Le RC522 (SPI) prend 4 broches. Pour garder l'IR **sur l'ATtiny85**, la sortie du
+récepteur IR est **partagée avec MISO** (deux entrées : le RC522 met MISO en haute
+impédance quand SS est haut) via une **résistance série de 1 kΩ**. Le moteur garde
+sa broche.
+
 | Broche | Rôle | Détail |
 |--------|------|--------|
-| **P0** | I2C **SDA** → PN532 | pull-ups présents sur la carte PN532 |
-| **P2** | I2C **SCL** → PN532 | " |
-| **P3** | sortie **récepteur IR** | TSOP38238 / VS1838B (38 kHz), 3 fils (VCC/GND/OUT) |
-| **P4** | **moteur** de vibration | via **transistor** (NPN/MOSFET) + **diode** de roue libre |
-| **P1** | LED interne | état / guidage apprentissage |
+| **P0** | **MOSI** → RC522 | |
+| **P4** | **SCK** → RC522 | |
+| **P2** | **MISO** ← RC522 **+ récepteur IR via 1 kΩ** | TSOP38238 / VS1838B (38 kHz) |
+| **P3** | **SS/NSS** → RC522 | |
+| **P1** | **moteur** (transistor + diode) + LED interne | la LED montre la vibration |
+| RST RC522 | → **VCC** | reset logiciel par commande |
 | P5 | (reset) | ne pas utiliser |
 
-- **PN532** : à mettre en mode **I2C** (cavalier/switch selon le modèle), alimenté
-  en 3V3 ou 5V selon la carte, SDA→P0, SCL→P2, GND commun.
-- **Moteur** : ne JAMAIS le brancher direct sur la broche (courant + retour de
-  tension) → transistor commandé par P4, moteur sur l'alim, diode en parallèle.
-- **Récepteur IR** : OUT→P3, alim 3V3/5V, GND commun.
+- **RC522** : alim **3V3** (⚠️ pas 5V sur le VCC du module), niveaux logiques 5V
+  tolérés sur les entrées. RST relié à VCC.
+- **Récepteur IR** : OUT → **1 kΩ** → P2 ; alim 3V3/5V, GND commun.
+- **Moteur** : jamais direct sur la broche → transistor commandé par P1 (+ diode).
+- **Pourquoi pas partager IR avec le moteur** : sortie push-pull de l'IR = contention
+  avec la sortie MCU, et ligne IR haute au repos = moteur activé en permanence. Le
+  partage propre est IR+MISO (deux entrées).
 
 #### Télécommande IR — apprentissage (pas de code à connaître)
 
@@ -274,21 +283,23 @@ identiques ont parfois des codes différents, donc pas de valeurs en dur) :
 
 #### Diagnostic au démarrage (LED interne)
 
-À la mise sous tension, après le « bip » du moteur, la LED indique l'état du PN532 :
-- **2 clignotements lents** = PN532 détecté (I2C OK).
-- **6 clignotements rapides** = PN532 absent/non répondant → on compte sur l'IR.
+À la mise sous tension, après le « bip » du moteur, la LED (sur P1 = moteur) indique
+l'état du RC522 :
+- **2 clignotements lents** = RC522 détecté (lecture du registre Version OK).
+- **6 clignotements rapides** = RC522 absent/non répondant → on compte sur l'IR.
 
-⚠️ **Réserve LED** : sur la plupart des Digispark la LED interne est sur **P1**
-(ce qu'on utilise). Sur certains clones elle est sur **P0** — or P0 = SDA ici. Si
-la LED reste éteinte/incohérente, c'est probablement ce cas : déplacer alors la LED
-d'état (`LED_PIN`) sur une autre broche libre, ou ignorer le diagnostic.
+⚠️ **Réserve LED** : la LED interne est sur **P1** sur la plupart des Digispark (ce
+qu'on utilise, avec le moteur). Sur certains clones elle est sur **P0** = MOSI ici :
+le diagnostic clignoterait de façon incohérente, sans conséquence (RFID/IR marchent
+quand même).
 
 ---
 
 ## 9. Reste à faire
 
-- **Diapason** : valider le pilote PN532 sur matériel (partie non testée). L'IR est
-  déjà autonome (apprentissage EEPROM, aucun code à saisir).
+- **Diapason** : valider le pilote **RC522** (SPI logiciel + partage MISO/IR) sur
+  matériel — c'est la partie non testée. L'IR est déjà autonome (apprentissage EEPROM).
+  Confirmer le type de carte : NTAG/Ultralight OK ; MIFARE Classic = auth à ajouter.
 - **Médaillon** : `NUM_LEDS` réglé à 12 par défaut — ajuster au vrai anneau.
 - Vérifier l'heure locale envoyée par la commande `TIME` (cf. §2).
 - Affiner les couleurs/effets sur le vrai matériel (bougie, arc-en-ciel, comète…).
