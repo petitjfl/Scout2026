@@ -1,6 +1,18 @@
-/* Balise D1 mini - Deep sleep wake-windows + single DEBUG_MODE flag + EEPROM persistence
-   Channel forced to WIFI_CHANNEL (9)
-   DEBUG_MODE = true pour debug (pas de deep sleep)
+/* Balise de Veille — Wemos D1 mini (ESP8266) + anneau NeoPixel
+   « Symphonie des Échos Noirs » — camp d'été 2026, Meute 6A St-Paul d'Aylmer.
+
+   Les quatre balises forment le Cercle de Veille autour du camp : bleu pulsant
+   faible la nuit (visible des tentes), deep-sleep le jour (économie batterie),
+   et modes forcés pilotés par le master pendant les veillées et la finale.
+
+   Protocole ESP-NOW (canal 9) : voir PROTOCOL.md à la racine du dépôt.
+     - heartbeat : "HB|<seq>|<id>|<mode>|<batt_mv>"
+     - commande  : "CMD|<NOM>|<arg>"   (unicast du master)
+     - ack       : "ACK|<id>|<NOM>|<status>"
+
+   L'identité et le mode de build sont injectés par platformio.ini :
+     DEVICE_ID / DEVICE_NAME : un environnement par balise physique.
+     DEBUG_MODE=1 : série active, pas de deep-sleep (dev). 0 avant le camp.
 */
 
 #include <Arduino.h>
@@ -9,8 +21,16 @@
 #include <FastLED.h>
 #include <EEPROM.h>
 
-// Build mode single flag: change this before flashing
-#define DEBUG_MODE true   // true = dev (serial on, no sleep). false = prod (serial off, sleep enabled)
+// Fallbacks si compilé hors des environnements nommés de platformio.ini.
+#ifndef DEBUG_MODE
+#define DEBUG_MODE 1
+#endif
+#ifndef DEVICE_ID
+#define DEVICE_ID 1
+#endif
+#ifndef DEVICE_NAME
+#define DEVICE_NAME "Balise_1"
+#endif
 
 const bool DEBUG = DEBUG_MODE;
 // Deep-sleep = LE JOUR seulement (économie batterie, les balises ne servent pas).
@@ -18,20 +38,14 @@ const bool DEBUG = DEBUG_MODE;
 // tentes, et rester réactives (la finale se joue le soir). La batterie tient 24 h.
 const bool USE_DEEP_SLEEP = !DEBUG;
 
-#define WIFI_CHANNEL 9  // FORCED CHANNEL
-
-// Device identity
-const uint8_t DEVICE_ID = 4;
-const char* DEVICE_NAME = "Balise_Ouest";
+#define WIFI_CHANNEL 9  // canal imposé, doit correspondre au master
 
 #define LED_PIN D4
 #define NUM_LEDS 6
 CRGB leds[NUM_LEDS];
 
-// Heartbeat / timing defaults (HEARTBEAT_INTERVAL_MS will be derived)
-unsigned long HEARTBEAT_INTERVAL_MS = 3000; // dev default
-const unsigned long HB_DAY_MS   = 60UL * 60UL * 1000UL; // 1h day
-const unsigned long HB_NIGHT_MS = 2UL * 60UL * 1000UL;  // 2min night
+// Doit rester nettement sous le timeout de présence du master (10 s).
+const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 
 // Deep sleep / wake window parameters (production)
 const unsigned long WAKE_WINDOW_MS = 2000;  // listen 2s after wake
@@ -84,8 +98,6 @@ const int MAX_PEERS = 12;
 struct PeerInfo { uint8_t id; unsigned long lastSeen; };
 PeerInfo peers[MAX_PEERS];
 
-void dbg(const String &s) { if (DEBUG) Serial.println(s); }
-
 unsigned long nowEpoch() {
   if (syncedEpoch == 0) return 0;
   unsigned long delta = (millis() - syncedMillis) / 1000;
@@ -94,6 +106,8 @@ unsigned long nowEpoch() {
 
 // Nuit = ~20h35 -> 5h30. Sans heure synchronisée, on suppose la nuit (la balise
 // reste alors allumée/veille plutôt que de dormir et d'être éteinte au mauvais moment).
+// NOTE : gmtime() est correct ici parce que la commande TIME du master transmet
+// un epoch DÉJÀ décalé en heure locale (voir app.js / PROTOCOL.md).
 bool isNightNow() {
   bool haveTime = (syncedEpoch != 0) && ((millis() - lastReceivedTimeSync) <= TIME_SYNC_TIMEOUT_MS);
   if (!haveTime) return true;
@@ -229,7 +243,7 @@ void sendBroadcast(const char* msg) {
 }
 void sendAck(const uint8_t *mac, const char* cmd, const char* status) {
   char buf[64];
-  snprintf(buf, sizeof(buf), "ACK|%u|%s|%s", DEVICE_ID, cmd, status);
+  snprintf(buf, sizeof(buf), "ACK|%u|%s|%s", (unsigned)DEVICE_ID, cmd, status);
   sendToMac(mac, buf);
   if (DEBUG) {
     char macStr[18];
@@ -244,7 +258,8 @@ void sendAck(const uint8_t *mac, const char* cmd, const char* status) {
 void sendHeartbeat() {
   int batt = readBatteryMv();
   char buf[80];
-  snprintf(buf, sizeof(buf), "HB|%lu|%u|%u|%d", (unsigned long)hbSeq, DEVICE_ID, (uint8_t)currentMode, batt);
+  snprintf(buf, sizeof(buf), "HB|%lu|%u|%u|%d",
+           (unsigned long)hbSeq, (unsigned)DEVICE_ID, (unsigned)currentMode, batt);
   sendBroadcast(buf);
   lastHeartbeatSent = millis();
   hbSeq++;
@@ -456,8 +471,8 @@ void setup() {
   if (DEBUG) Serial.begin(115200);
   delay(50);
   if (DEBUG) {
-    Serial.print("Local MAC: ");
-    Serial.println(WiFi.macAddress());
+    Serial.printf("\n%s (id=%u) — MAC: %s\n", DEVICE_NAME, (unsigned)DEVICE_ID,
+                  WiFi.macAddress().c_str());
   }
   FastLED.addLeds<NEOPIXEL, LED_PIN>(leds, NUM_LEDS);
   FastLED.clear(); FastLED.show();
@@ -474,7 +489,6 @@ void setup() {
   // Quand elle est éveillée (la nuit / en finale) : radio sans veille pour un
   // ESP-NOW réactif et des LEDs stables. Le jour, la boucle repasse en deep-sleep.
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
-  HEARTBEAT_INTERVAL_MS = 5000;
 }
 
 void loop() {
@@ -484,9 +498,6 @@ void loop() {
   if (stateDirty) { stateDirty = false; saveState(); }
 
   bool night = isNightNow();
-
-  // HB régulier (balise éveillée) pour rester "présente" côté master.
-  HEARTBEAT_INTERVAL_MS = 5000;
 
   // Deep-sleep UNIQUEMENT le jour (et jamais en mode forcé / finale). La nuit,
   // la balise reste éveillée pour veiller (bleu faible) et répondre en temps réel.
@@ -498,7 +509,6 @@ void loop() {
       delay(10); // les callbacks ESP-NOW tournent en asynchrone
     }
     saveState();
-    if (DEBUG) Serial.println("Jour : entrée en deep sleep...");
     ESP.deepSleep(WAKE_INTERVAL_S * 1000000ULL);
     // ne revient pas
   } else {

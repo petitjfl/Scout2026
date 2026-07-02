@@ -1,6 +1,15 @@
-// Master ESP32 - ESP-NOW manager + WebServer + WebSocket + LittleFS
-// Channel forced to 9, UNICAST_GAP_MS = 300
-// Detailed ESP-NOW RX logging and WS send/broadcast  wrappers
+/* Master (Baguette du Chef d'orchestre) — ESP32 DevKit v1
+   « Symphonie des Échos Noirs » — camp d'été 2026, Meute 6A St-Paul d'Aylmer.
+
+   Console de régie des artefacts : point d'accès WiFi (MASTER_AP) servant
+   l'interface web (LittleFS + WebSocket), et coordinateur ESP-NOW des
+   accessoires (balises, lanternes, médaillons) sur le canal 9.
+
+   Protocole ESP-NOW : voir PROTOCOL.md à la racine du dépôt.
+   Fiabilité : file de commandes en attente avec retries, push immédiat à la
+   réception d'un heartbeat (fenêtre de réveil des balises), réception ESP-NOW
+   découplée par une file SPSC (le callback tourne dans la tâche WiFi).
+*/
 
 #include <WiFi.h>
 #include <esp_now.h>
@@ -13,6 +22,7 @@
 // ---------------- CONFIG ----------------
 #define AP_SSID "MASTER_AP"
 #define AP_PASS "masterpass"
+#define WIFI_CHANNEL 9              // canal imposé, doit correspondre aux accessoires
 const uint16_t WS_PORT = 81;
 const uint16_t HTTP_PORT = 80;
 const char* CONFIG_PATH = "/config.json";
@@ -24,6 +34,8 @@ unsigned long UNICAST_GAP_MS = 300; // ms
 const unsigned long WAKE_INTERVAL_MS = 60UL * 1000UL; // 60s
 
 // ---------------- State ----------------
+const int MAX_ACCESSORIES = 8;
+
 struct Accessory {
   uint8_t id;
   String name;
@@ -36,8 +48,16 @@ struct Accessory {
   unsigned long lastAckMs;
   bool present;
 };
-Accessory accessories[8];
+Accessory accessories[MAX_ACCESSORIES];
 int accessoryCount = 0;
+
+// Plages d'ID par type d'accessoire (voir PROTOCOL.md ; alignées sur
+// kindForId() dans data/app.js) : balises 1-9, lanternes 10-19, médaillons 20+.
+const char* roleForId(uint8_t id) {
+  if (id >= 20) return "medaillon";
+  if (id >= 10) return "lanterne";
+  return "balise";
+}
 
 // Pending command per-target (one slot per balise, keep only last command)
 struct PendingCmd {
@@ -85,14 +105,14 @@ bool macIsValid(const uint8_t *mac) {
 
 // ---------------- Persistence ----------------
 void saveConfig() {
-  StaticJsonDocument<2048> doc;
-  JsonArray arr = doc.createNestedArray("accessories");
+  JsonDocument doc;
+  JsonArray arr = doc["accessories"].to<JsonArray>();
   for (int i=0;i<accessoryCount;i++) {
-    JsonObject it = arr.createNestedObject();
+    JsonObject it = arr.add<JsonObject>();
     it["id"] = accessories[i].id;
     it["name"] = accessories[i].name;
     it["mac"] = accessories[i].hasMac ? macToStr(accessories[i].mac) : "";
-    it["role"] = "balise";
+    it["role"] = roleForId(accessories[i].id);
   }
   doc["retries"] = RETRIES;
   doc["unicast_gap_ms"] = UNICAST_GAP_MS;
@@ -111,20 +131,23 @@ void loadConfig() {
   if (!LittleFS.exists(CONFIG_PATH)) return;
   File f = LittleFS.open(CONFIG_PATH, "r");
   if (!f) return;
-  StaticJsonDocument<2048> doc;
+  JsonDocument doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-  if (err) return;
+  if (err) {
+    Serial.printf("loadConfig: JSON invalide (%s)\n", err.c_str());
+    return;
+  }
   RETRIES = doc["retries"] | RETRIES;
   UNICAST_GAP_MS = doc["unicast_gap_ms"] | UNICAST_GAP_MS;
-  if (doc.containsKey("accessories")) {
+  if (doc["accessories"].is<JsonArray>()) {
     JsonArray arr = doc["accessories"].as<JsonArray>();
     accessoryCount = 0;
     for (JsonVariant v : arr) {
-      if (accessoryCount >= 8) break;
+      if (accessoryCount >= MAX_ACCESSORIES) break;
       accessories[accessoryCount].id = v["id"].as<int>();
-      accessories[accessoryCount].name = String((const char*)v["name"]);
-      String macs = String((const char*)v["mac"]);
+      accessories[accessoryCount].name = String(v["name"] | "");
+      String macs = String(v["mac"] | "");
       if (macs.length() == 17 && macs != "00:00:00:00:00:00") {
         uint8_t m[6];
         sscanf(macs.c_str(), "%02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX",
@@ -147,7 +170,7 @@ bool ensurePeerExists(const uint8_t *mac) {
   if (esp_now_is_peer_exist(mac)) return true;
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, mac, 6);
-  peer.channel = 9;
+  peer.channel = WIFI_CHANNEL;
   peer.ifidx = WIFI_IF_STA;
   peer.encrypt = false;
   esp_err_t r = esp_now_add_peer(&peer);
@@ -204,7 +227,7 @@ bool trySendPending(int slot) {
   // notify UI update about attempt only if attempts changed since last broadcast
   if (pending[slot].attempts != pending[slot].lastBroadcastAttempts) {
     pending[slot].lastBroadcastAttempts = pending[slot].attempts;
-    StaticJsonDocument<256> d;
+    JsonDocument d;
     d["type"]="pending_update";
     d["id"]=pending[slot].targetId;
     d["cmd"]=pending[slot].cmd;
@@ -221,7 +244,7 @@ bool trySendPending(int slot) {
 
 void markPendingFailed(int slot, const char* reason) {
   if (!pending[slot].active) return;
-  StaticJsonDocument<256> d;
+  JsonDocument d;
   d["type"]="send_result";
   d["id"]=pending[slot].targetId;
   d["cmd"]=pending[slot].cmd;
@@ -337,7 +360,7 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
 
       int idx = -1;
       for (int i=0;i<accessoryCount;i++) if (accessories[i].id == id) { idx = i; break; }
-      if (idx==-1 && accessoryCount < 8) {
+      if (idx==-1 && accessoryCount < MAX_ACCESSORIES) {
         idx = accessoryCount++;
         accessories[idx].id = id;
         accessories[idx].name = String("ID_") + String(id);
@@ -400,7 +423,7 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
             accessories[j].lastAckMs = millis();
             break;
           }
-          StaticJsonDocument<256> d;
+          JsonDocument d;
           d["type"]="ack";
           d["id"]=id;
           d["cmd"]=cmd;
@@ -409,7 +432,7 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
           wsBroadcast(out);
 
           // notify send_result success (UI expects send_result)
-          StaticJsonDocument<256> r;
+          JsonDocument r;
           r["type"]="send_result";
           r["id"]=id;
           r["cmd"]=cmd;
@@ -466,18 +489,18 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
   if (type == WStype_CONNECTED) {
     IPAddress ip = webSocket.remoteIP(num);
     Serial.printf("WS client connected: id=%u ip=%s\n", num, ip.toString().c_str());
-    StaticJsonDocument<128> d;
+    JsonDocument d;
     d["type"]="log";
     d["msg"]=String("WS connected: ") + ip.toString();
     String out; serializeJson(d,out);
     wsSend(num, out);
 
     // send initial scan_result to this client
-    StaticJsonDocument<1024> s;
+    JsonDocument s;
     s["type"]="scan_result";
-    JsonArray arr = s.createNestedArray("items");
+    JsonArray arr = s["items"].to<JsonArray>();
     for (int i=0;i<accessoryCount;i++) {
-      JsonObject it = arr.createNestedObject();
+      JsonObject it = arr.add<JsonObject>();
       it["id"] = accessories[i].id;
       it["name"] = accessories[i].name;
       it["mac"] = accessories[i].hasMac ? macToStr(accessories[i].mac) : "";
@@ -498,20 +521,18 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
     Serial.printf("WS RX from client %u: %s\n", num, s.c_str());
 
     // Try parse JSON to handle ping/pong quickly
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, s);
     if (!err) {
-      if (doc.containsKey("type")) {
-        String t = String((const char*)doc["type"]);
-        if (t == "ping") {
-          // reply with pong to the same client
-          StaticJsonDocument<64> r;
-          r["type"] = "pong";
-          String out; serializeJson(r, out);
-          wsSend(num, out);
-          Serial.printf("WS: pong -> client %u\n", num);
-          return; // handled
-        }
+      const char* t = doc["type"] | "";
+      if (strcmp(t, "ping") == 0) {
+        // reply with pong to the same client
+        JsonDocument r;
+        r["type"] = "pong";
+        String out; serializeJson(r, out);
+        wsSend(num, out);
+        Serial.printf("WS: pong -> client %u\n", num);
+        return; // handled
       }
     }
     // Not a ping/pong or not handled above: forward to existing handler
@@ -540,9 +561,6 @@ void handleConfigGet() {
   }
 }
 
-// ---------------- Config load (already defined above) ----------------
-// loadConfig() implemented earlier
-
 // ---------------- Setup ----------------
 void setup() {
   Serial.begin(115200);
@@ -555,16 +573,16 @@ void setup() {
     Serial.println("LittleFS.begin FAILED");
   } else Serial.println("LittleFS OK");
 
-  // AP + STA on channel 9 (user requested)
+  // AP + STA sur le canal imposé (ESP-NOW et softAP doivent partager le canal)
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(AP_SSID, AP_PASS, 9);
-  Serial.println("AP started (channel 9)");
+  WiFi.softAP(AP_SSID, AP_PASS, WIFI_CHANNEL);
+  Serial.printf("AP started (channel %d)\n", WIFI_CHANNEL);
   Serial.print("IP: ");
   Serial.println(WiFi.softAPIP());
   WiFi.disconnect();
 
   accessoryCount = 0;
-  for (int i=0;i<8;i++) {
+  for (int i=0;i<MAX_ACCESSORIES;i++) {
     accessories[i].hasMac = false;
     accessories[i].present = false;
     for (int j=0;j<6;j++) accessories[i].mac[j] = 0;
@@ -577,7 +595,7 @@ void setup() {
   loadConfig();
 
   // Force WiFi radio channel for ESP-NOW before esp_now_init
-  esp_err_t ch = esp_wifi_set_channel(9, WIFI_SECOND_CHAN_NONE);
+  esp_err_t ch = esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
   Serial.printf("esp_wifi_set_channel -> %d\n", (int)ch);
 
   // init ESP-NOW (do NOT change WiFi.mode after this)
@@ -591,11 +609,11 @@ void setup() {
   esp_now_register_recv_cb(onDataRecv);
   esp_now_register_send_cb(onDataSent);
 
-  // ensure broadcast peer exists on channel 9
+  // ensure broadcast peer exists on the forced channel
   uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
   esp_now_peer_info_t pb = {};
   memcpy(pb.peer_addr, bcast, 6);
-  pb.channel = 9;
+  pb.channel = WIFI_CHANNEL;
   pb.ifidx = WIFI_IF_STA;
   pb.encrypt = false;
   esp_err_t rr = esp_now_add_peer(&pb);
@@ -638,7 +656,7 @@ void loop() {
     IPAddress apip = WiFi.softAPIP();
     if (apip.toString() == "0.0.0.0") {
       Serial.println("AP appears down, restarting softAP...");
-      WiFi.softAP(AP_SSID, AP_PASS, 9);
+      WiFi.softAP(AP_SSID, AP_PASS, WIFI_CHANNEL);
       esp_wifi_set_ps(WIFI_PS_NONE); // softAP() may re-enable power-save
       Serial.print("AP restarted, IP: ");
       Serial.println(WiFi.softAPIP());
@@ -663,7 +681,7 @@ void loop() {
               Serial.print("esp_now_del_peer -> ");
               Serial.println((int)r);
             }
-            StaticJsonDocument<256> d;
+            JsonDocument d;
             d["type"]="status";
             d["id"]=accessories[i].id;
             d["present"]=false;
@@ -673,7 +691,7 @@ void loop() {
         } else {
           if (!accessories[i].present) {
             accessories[i].present = true;
-            StaticJsonDocument<256> d;
+            JsonDocument d;
             d["type"]="status";
             d["id"]=accessories[i].id;
             d["present"]=true;
@@ -689,11 +707,11 @@ void loop() {
   if (hbDirty && millis() - lastHbBroadcast >= HB_BROADCAST_INTERVAL_MS) {
     lastHbBroadcast = millis();
     hbDirty = false;
-    StaticJsonDocument<2048> d;
+    JsonDocument d;
     d["type"] = "hb_batch";
-    JsonArray arr = d.createNestedArray("items");
+    JsonArray arr = d["items"].to<JsonArray>();
     for (int i=0;i<accessoryCount;i++) {
-      JsonObject it = arr.createNestedObject();
+      JsonObject it = arr.add<JsonObject>();
       it["id"] = accessories[i].id;
       it["mode"] = accessories[i].mode;
       it["batt"] = accessories[i].batteryMv;
@@ -719,7 +737,7 @@ void loop() {
 void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   if (type == WStype_TEXT) {
     String s = String((char*)payload);
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, s);
     if (err) return;
     String action = doc["action"];
@@ -735,7 +753,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
         for (int i=0;i<accessoryCount;i++) {
           if (accessories[i].id == id) {
             if (!accessories[i].hasMac) {
-              StaticJsonDocument<256> d;
+              JsonDocument d;
               d["type"]="send_result";
               d["id"]=id;
               d["cmd"]=cmd;
@@ -748,7 +766,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
             const uint8_t *mac = accessories[i].mac;
             bool queued = queueOrReplaceCommand(mac, id, cmd, msg);
             if (!queued) {
-              StaticJsonDocument<256> d;
+              JsonDocument d;
               d["type"]="send_result";
               d["id"]=id;
               d["cmd"]=cmd;
@@ -757,7 +775,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
               String out; serializeJson(d,out);
               wsSend(num, out);
             } else {
-              StaticJsonDocument<256> d;
+              JsonDocument d;
               d["type"]="send_result";
               d["id"]=id;
               d["cmd"]=cmd;
@@ -779,7 +797,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
       for (int i=0;i<accessoryCount;i++) {
         if (accessories[i].hasMac) {
           bool queued = queueOrReplaceCommand(accessories[i].mac, accessories[i].id, cmd, msg);
-          StaticJsonDocument<256> d;
+          JsonDocument d;
           d["type"]="send_result";
           d["id"]=accessories[i].id;
           d["cmd"]=cmd;
@@ -788,7 +806,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
           String out; serializeJson(d,out);
           wsSend(num, out);
         } else {
-          StaticJsonDocument<256> d;
+          JsonDocument d;
           d["type"]="send_result";
           d["id"]=accessories[i].id;
           d["cmd"]=cmd;
@@ -799,11 +817,11 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
         }
       }
     } else if (action == "scan") {
-      StaticJsonDocument<1024> d;
+      JsonDocument d;
       d["type"]="scan_result";
-      JsonArray arr = d.createNestedArray("items");
+      JsonArray arr = d["items"].to<JsonArray>();
       for (int i=0;i<accessoryCount;i++) {
-        JsonObject it = arr.createNestedObject();
+        JsonObject it = arr.add<JsonObject>();
         it["id"] = accessories[i].id;
         it["name"] = accessories[i].name;
         it["mac"] = accessories[i].hasMac ? macToStr(accessories[i].mac) : "";
@@ -820,7 +838,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
       for (int i=0;i<accessoryCount;i++) {
         if (accessories[i].hasMac) {
           bool queued = queueOrReplaceCommand(accessories[i].mac, accessories[i].id, "FINAL", msg);
-          StaticJsonDocument<256> d;
+          JsonDocument d;
           d["type"]="send_result";
           d["id"]=accessories[i].id;
           d["cmd"]="FINAL";

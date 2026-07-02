@@ -154,11 +154,12 @@ pio run -d master_esp32 -t uploadfs
 # Firmware master
 pio run -d master_esp32 -t upload
 
-# Firmware balise (changer DEVICE_ID/DEVICE_NAME avant chaque flash)
-pio run -d balise_esp8266/balise_esp8266 -t upload
+# Firmware balise — un environnement par balise, identité injectée par build flag
+pio run -d balise_esp8266 -e balise_nord -t upload   # idem _sud / _est / _ouest
 
-# Firmware lanterne (DEVICE_ID dans la plage 10–19)
-pio run -d lanterne_esp8266 -t upload
+# Firmware lanterne / médaillon
+pio run -d lanterne_esp8266  -e lanterne_1  -t upload
+pio run -d medaillon_esp8266 -e medaillon_1 -t upload
 ```
 
 Sous Windows, si `pio` n'est pas dans le PATH :
@@ -301,6 +302,55 @@ quand même).
   matériel — c'est la partie non testée. L'IR est déjà autonome (apprentissage EEPROM).
   Confirmer le type de carte : NTAG/Ultralight OK ; MIFARE Classic = auth à ajouter.
 - **Médaillon** : `NUM_LEDS` réglé à 12 par défaut — ajuster au vrai anneau.
-- Vérifier l'heure locale envoyée par la commande `TIME` (cf. §2).
 - Affiner les couleurs/effets sur le vrai matériel (bougie, arc-en-ciel, comète…).
 - Flasher les 4 balises, la lanterne, le médaillon, et pousser l'UI (`uploadfs`).
+- Avant le camp : `DEBUG_MODE=0` dans les `platformio.ini` (balise/lanterne/médaillon).
+
+---
+
+## 10. Passe de professionnalisation (2026-07-01)
+
+### 10.1 Identité des appareils par build flags
+
+Fini l'édition du code avant chaque flash : `DEVICE_ID`, `DEVICE_NAME` et
+`DEBUG_MODE` sont injectés par `platformio.ini`, avec **un environnement par
+appareil physique** (`balise_nord|sud|est|ouest`, `lanterne_1`, `medaillon_1`).
+Les sources gardent des fallbacks `#ifndef`. `DEBUG_MODE` se bascule à un seul
+endroit (section `[env]`) pour le passage en production.
+
+### 10.2 Documentation
+
+- **`README.md`** (racine) : vue d'ensemble, inventaire des appareils,
+  architecture, commandes de build/flash, opération au camp, checklist.
+- **`PROTOCOL.md`** (racine, nouvelle référence unique) : trames ESP-NOW,
+  commandes et modes par type d'appareil, plages d'ID, modèle de fiabilité,
+  sémantique `TIME`, messages WebSocket UI ↔ master.
+- **`storyline.md`** (racine) : guide de l'opérateur — cue par cue, soir par
+  soir, quelle action dans l'interface et à quel moment de la légende.
+- README par sous-projet (câblage, environnements de build, comportement).
+
+### 10.3 Correctifs
+
+- **`TIME` en heure locale** (bug §2 clos) : l'UI envoie désormais un epoch
+  décalé du fuseau du téléphone ; le `gmtime()` des balises rend donc l'heure
+  murale locale. Plus de décalage du cycle jour/nuit.
+- **Lanterne** : `SETMODE` acceptait seulement 0–3 ; borne corrigée à
+  `MODE_MAX` (REVELATION et WINDIGO accessibles aussi par SETMODE).
+- **Master** : `saveConfig()` écrivait `role="balise"` pour tous les
+  accessoires ; le rôle est maintenant déduit de la plage d'ID (`roleForId()`).
+- **Master** : migration **ArduinoJson v7** (`JsonDocument`, `to<JsonArray>()`,
+  `add<JsonObject>()`) — plus d'API v6 dépréciée ; lecture de `config.json`
+  robuste aux champs absents (`| ""`), erreur JSON loggée.
+- `platformio.ini` du master : `Upload_port` → `upload_port` (la clé mal
+  orthographiée était ignorée par PlatformIO).
+
+### 10.4 Nettoyage
+
+- Suppression du dossier résiduel `balise_esp8266/balise_esp8266/` (reliquat
+  du déplacement d'un niveau) et des README boilerplate PlatformIO.
+- `medaillon.cpp` → `main.cpp` (convention commune aux projets).
+- Balise : suppression du code mort (`HB_DAY_MS`, `HB_NIGHT_MS`, `dbg()`,
+  double affectation de `HEARTBEAT_INTERVAL_MS` — désormais constante).
+- Constantes nommées côté master (`WIFI_CHANNEL`, `MAX_ACCESSORIES`) au lieu
+  des littéraux 9 et 8 répétés.
+- `config.json` : suppression de la clé morte `ack_timeout_ms`.

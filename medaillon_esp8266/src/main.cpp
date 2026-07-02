@@ -1,16 +1,21 @@
-/* Médaillon D1 mini (ESP8266) - ESP-NOW accessory for the MASTER_AP network
-   Same hardware as a lanterne (D1 mini + NeoPixel ring). It stays awake and
-   listens for commands. Its signature effect for the finale is triggered on
-   contact with the Baguette (phase 4):
+/* Médaillon du Dernier Accord — Wemos D1 mini (ESP8266) + anneau NeoPixel
+   « Symphonie des Échos Noirs » — camp d'été 2026, Meute 6A St-Paul d'Aylmer.
 
-     TRIGGER : "s'illumine" — a comet / dragon-chasing-its-tail that gradually
-               shifts colour, building up to a bright golden-white climax.
-     STOP    : back to rest (off).
+   Même matériel qu'une lanterne. Reste éveillé et écoute les commandes. Son
+   effet signature se déclenche au contact de la Baguette (finale, phase 4) :
 
-   Channel forced to WIFI_CHANNEL (9), same protocol as the other accessories:
+     TRIGGER : « s'illumine » — comète qui se poursuit autour de l'anneau,
+               dérive de couleur, montée vers un sommet doré/blanc brillant.
+     STOP    : retour au repos (éteint).
+
+   Protocole ESP-NOW (canal 9) : voir PROTOCOL.md à la racine du dépôt.
      - heartbeat : "HB|<seq>|<id>|<mode>|<batt_mv>"
-     - command   : "CMD|<NAME>|<arg>"  (unicast from the master)
-     - ack       : "ACK|<id>|<NAME>|<status>"
+     - commande  : "CMD|<NOM>|<arg>"   (unicast du master)
+     - ack       : "ACK|<id>|<NOM>|<status>"
+
+   L'identité et le mode de build sont injectés par platformio.ini :
+     DEVICE_ID / DEVICE_NAME : un environnement par médaillon (plage 20–29).
+     DEBUG_MODE=1 : série active (dev). 0 avant le camp.
 */
 
 #include <Arduino.h>
@@ -18,14 +23,20 @@
 #include <espnow.h>
 #include <FastLED.h>
 
-#define DEBUG_MODE true   // true = serial on (dev). false = serial off (prod).
+// Fallbacks si compilé hors des environnements nommés de platformio.ini.
+#ifndef DEBUG_MODE
+#define DEBUG_MODE 1
+#endif
+#ifndef DEVICE_ID
+#define DEVICE_ID 20
+#endif
+#ifndef DEVICE_NAME
+#define DEVICE_NAME "Medaillon_1"
+#endif
+
 const bool DEBUG = DEBUG_MODE;
 
-#define WIFI_CHANNEL 9    // FORCED CHANNEL (must match master + others)
-
-// ---- Device identity (médaillon range 20..29) ----
-const uint8_t DEVICE_ID = 20;
-const char* DEVICE_NAME = "Medaillon_1";
+#define WIFI_CHANNEL 9    // canal imposé, doit correspondre au master
 
 // ---- Hardware ----
 #define LED_PIN D4
@@ -121,7 +132,7 @@ void sendBroadcast(const char* msg) {
 }
 void sendAck(const uint8_t *mac, const char* cmd, const char* status) {
   char buf[64];
-  snprintf(buf, sizeof(buf), "ACK|%u|%s|%s", DEVICE_ID, cmd, status);
+  snprintf(buf, sizeof(buf), "ACK|%u|%s|%s", (unsigned)DEVICE_ID, cmd, status);
   sendToMac(mac, buf);
   if (DEBUG) { Serial.print("Sent ACK -> "); Serial.println(buf); }
 }
@@ -129,7 +140,7 @@ void sendHeartbeat() {
   int batt = readBatteryMv();
   char buf[80];
   snprintf(buf, sizeof(buf), "HB|%lu|%u|%u|%d",
-           (unsigned long)hbSeq, DEVICE_ID, (uint8_t)currentMode, batt);
+           (unsigned long)hbSeq, (unsigned)DEVICE_ID, (unsigned)currentMode, batt);
   sendBroadcast(buf);
   lastHeartbeatSent = millis();
   hbSeq++;
@@ -202,7 +213,10 @@ void setupEspNow() {
 void setup() {
   if (DEBUG) Serial.begin(115200);
   delay(50);
-  if (DEBUG) { Serial.print("Medaillon MAC: "); Serial.println(WiFi.macAddress()); }
+  if (DEBUG) {
+    Serial.printf("\n%s (id=%u) — MAC: %s\n", DEVICE_NAME, (unsigned)DEVICE_ID,
+                  WiFi.macAddress().c_str());
+  }
 
   FastLED.addLeds<NEOPIXEL, LED_PIN>(leds, NUM_LEDS);
   FastLED.clear();

@@ -1,19 +1,22 @@
-/* Lanterne D1 mini (ESP8266) - ESP-NOW accessory for the MASTER_AP network
-   Same hardware as a balise (D1 mini + NeoPixel ring) but it does NOT follow
-   the balises' blue day/night cycle. The lantern is a light source: it stays
-   awake, listens continuously for commands, and keeps whatever mode it was
-   last set to (persisted in EEPROM).
+/* Lanterne des Portées — Wemos D1 mini (ESP8266) + anneau NeoPixel
+   « Symphonie des Échos Noirs » — camp d'été 2026, Meute 6A St-Paul d'Aylmer.
 
-   Modes:
-     OFF    : LEDs off
-     CANDLE : warm flickering "candle" (default / normal)
-     ALERT  : red pulsing (breathing) for an alert
-     WHITE  : steady bright WARM white (never blue-white)
+   Même matériel qu'une balise mais ne suit PAS le cycle bleu jour/nuit : la
+   lanterne est une source de lumière. Elle reste éveillée, écoute les commandes
+   en continu et conserve son dernier mode (persisté en EEPROM).
 
-   Channel forced to WIFI_CHANNEL (9), same protocol as the balises:
+   Modes : OFF, CANDLE (bougie chaude, défaut), ALERT (pulsation rouge),
+   WHITE (blanc chaud brillant — jamais bleuté), REVELATION (ombres musicales,
+   finale phase 2), WINDIGO (fondu au noir puis clignote rouge, phase 3).
+
+   Protocole ESP-NOW (canal 9) : voir PROTOCOL.md à la racine du dépôt.
      - heartbeat : "HB|<seq>|<id>|<mode>|<batt_mv>"
-     - command   : "CMD|<NAME>|<arg>"  (unicast from the master)
-     - ack       : "ACK|<id>|<NAME>|<status>"
+     - commande  : "CMD|<NOM>|<arg>"   (unicast du master)
+     - ack       : "ACK|<id>|<NOM>|<status>"
+
+   L'identité et le mode de build sont injectés par platformio.ini :
+     DEVICE_ID / DEVICE_NAME : un environnement par lanterne (plage 10–19).
+     DEBUG_MODE=1 : série active (dev). 0 avant le camp.
 */
 
 #include <Arduino.h>
@@ -22,15 +25,20 @@
 #include <FastLED.h>
 #include <EEPROM.h>
 
-// Build mode single flag: change before flashing.
-#define DEBUG_MODE true   // true = serial on (dev). false = serial off (prod).
+// Fallbacks si compilé hors des environnements nommés de platformio.ini.
+#ifndef DEBUG_MODE
+#define DEBUG_MODE 1
+#endif
+#ifndef DEVICE_ID
+#define DEVICE_ID 10
+#endif
+#ifndef DEVICE_NAME
+#define DEVICE_NAME "Lanterne_1"
+#endif
+
 const bool DEBUG = DEBUG_MODE;
 
-#define WIFI_CHANNEL 9    // FORCED CHANNEL (must match master + balises)
-
-// ---- Device identity (CHANGE per physical lantern) ----
-const uint8_t DEVICE_ID = 10;            // keep unique vs balises (1..4) and other lanterns
-const char* DEVICE_NAME = "Lanterne_1";
+#define WIFI_CHANNEL 9    // canal imposé, doit correspondre au master
 
 // ---- Hardware (same wiring as a balise) ----
 #define LED_PIN D4
@@ -76,8 +84,6 @@ uint8_t broadcastAddress[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 // NEVER write flash inside the callback on the ESP8266: it can conflict with
 // the WiFi stack and crash ("Soft WDT reset"). loop() flushes this flag.
 volatile bool stateDirty = false;
-
-void dbg(const String &s) { if (DEBUG) Serial.println(s); }
 
 // ---------------- EEPROM persistence ----------------
 // layout: 0..3 magic (uint32), 4 mode (uint8)
@@ -222,7 +228,7 @@ void sendBroadcast(const char* msg) {
 }
 void sendAck(const uint8_t *mac, const char* cmd, const char* status) {
   char buf[64];
-  snprintf(buf, sizeof(buf), "ACK|%u|%s|%s", DEVICE_ID, cmd, status);
+  snprintf(buf, sizeof(buf), "ACK|%u|%s|%s", (unsigned)DEVICE_ID, cmd, status);
   sendToMac(mac, buf);
   if (DEBUG) { Serial.print("Sent ACK -> "); Serial.println(buf); }
 }
@@ -230,7 +236,7 @@ void sendHeartbeat() {
   int batt = readBatteryMv();
   char buf[80];
   snprintf(buf, sizeof(buf), "HB|%lu|%u|%u|%d",
-           (unsigned long)hbSeq, DEVICE_ID, (uint8_t)currentMode, batt);
+           (unsigned long)hbSeq, (unsigned)DEVICE_ID, (unsigned)currentMode, batt);
   sendBroadcast(buf);
   lastHeartbeatSent = millis();
   hbSeq++;
@@ -282,7 +288,7 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 
   if (cmd == "SETMODE") {
     int m = arg.toInt();
-    if (m < MODE_OFF || m > MODE_WHITE) { sendAck(mac, "SETMODE", "ERR"); return; }
+    if (m < MODE_OFF || m > MODE_MAX) { sendAck(mac, "SETMODE", "ERR"); return; }
     setMode((Mode)m);
     sendAck(mac, "SETMODE", "OK");
   } else if (cmd == "FORCE_OFF") {
@@ -329,7 +335,10 @@ void setupEspNow() {
 void setup() {
   if (DEBUG) Serial.begin(115200);
   delay(50);
-  if (DEBUG) { Serial.print("Lanterne MAC: "); Serial.println(WiFi.macAddress()); }
+  if (DEBUG) {
+    Serial.printf("\n%s (id=%u) — MAC: %s\n", DEVICE_NAME, (unsigned)DEVICE_ID,
+                  WiFi.macAddress().c_str());
+  }
 
   FastLED.addLeds<NEOPIXEL, LED_PIN>(leds, NUM_LEDS);
   FastLED.clear();

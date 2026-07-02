@@ -751,9 +751,11 @@
 
   if (btnTimeSync) {
     btnTimeSync.addEventListener('click', () => {
-      const epoch = Math.floor(Date.now() / 1000);
+      // Epoch décalé en HEURE LOCALE : les balises calculent jour/nuit avec
+      // gmtime() (pas de gestion de fuseau côté ESP8266). Voir PROTOCOL.md.
+      const epoch = Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / 1000);
       sendAction({ action: 'send_all', cmd: 'TIME', arg: String(epoch) });
-      log(`Envoi TIME (epoch=${epoch}) à tous`);
+      log(`Envoi TIME (epoch local=${epoch}) à tous`);
     });
   }
 

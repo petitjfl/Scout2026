@@ -7,7 +7,6 @@
     {"id": 10, "name": "Lanterne_1",  "mac": "", "role": "lanterne"},
     {"id": 20, "name": "Medaillon_1", "mac": "", "role": "medaillon"}
   ],
-  "ack_timeout_ms": 250,
   "retries": 3,
   "unicast_gap_ms": 300
 }
