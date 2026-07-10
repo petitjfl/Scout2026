@@ -1,47 +1,35 @@
 /* Diapason des Sentiers — Digispark Pro (ATtiny167)
    ------------------------------------------------------------------
-   Prop AUTONOME. Lit une carte RFID (RC522) contenant le texte "true"/"false"
-   et répond par le moteur de vibration :
-     - "true"  -> "vibre juste"        : pulsation propre
-     - "false" -> "bourdonnement laid" : vibration hachée
-   OVERRIDE télécommande IR (NEC) prioritaire = BACKUP si le RC522 ne marche pas.
-
-   Digispark Pro (ATtiny167) : on utilise les broches SPI matérielles du core
-   Digistump (MOSI=10, MISO=8, SCK=11, SS=12). Le récepteur IR n'est plus
-   partagé avec MISO ; il a sa propre entrée.
+   Mode actuel : diagnostic IR seul.
+   - flash court LED = activité brute vue sur D2
+   - flash long + 8 bits LED = commande NEC décodée
 
    Brochage utilisé :
-     D10 = MOSI  -> RC522
-     D11 = SCK   -> RC522
-     D8  = MISO  <- RC522
-     D12 = SS/NSS-> RC522
      D2  = entrée récepteur IR (TSOP/VS1838B)
-     D1  = moteur (transistor + diode)
-     RST du RC522 -> VCC (reset logiciel géré par commande)
-
-   ⚠️ Pilote RC522 en SPI logiciel NON testé sur matériel : à valider au banc.
-   Cartes NTAG/Ultralight (texte NDEF) supportées ; MIFARE Classic nécessiterait
-   une authentification (non gérée ici).
+     D1  = LED intégrée / diagnostic
+     D0  = moteur (transistor + diode)
 */
 
 #include <Arduino.h>
 #include <avr/eeprom.h>
 
-#define USE_RC522 1
+#define USE_RC522 0
 #define USE_IR    1
+#define IR_DIAGNOSTIC_MODE 1
 
 // ---- Broches (Digispark Pro / ATtiny167) ----
 #define PIN_MOSI MOSI
 #define PIN_SCK  SCK
 #define PIN_MISO MISO
 #define PIN_SS   SS
-#define MOTOR_PIN 1
-#define LED_PIN   1         // LED/PWM sur D1
+#define MOTOR_PIN 0         // PWM libre ; laisse D1 à la LED intégrée
+#define LED_PIN   LED_BUILTIN
 #define IR_PIN    2         // entrée dédiée IR
 
 #define EE_MAGIC 0x5A
 uint8_t g_trueCode = 0, g_falseCode = 0;
 bool    g_learned  = false;
+bool    g_irActivitySeen = false;
 
 enum Verdict { V_NONE = 0, V_TRUE = 1, V_FALSE = 2 };
 
@@ -50,6 +38,7 @@ static uint8_t rnd8() { rndState = rndState * 25173u + 13849u; return rndState >
 
 // ================= Retour vibration =================
 static inline void motor(uint8_t level) { analogWrite(MOTOR_PIN, level); }
+static inline void led(bool on) { digitalWrite(LED_PIN, on ? HIGH : LOW); }
 void feedbackTrue() {
   for (uint8_t i = 0; i < 3; i++) {
     for (int v = 0;   v <= 255; v += 15) { motor((uint8_t)v); delay(6); }
@@ -69,13 +58,39 @@ void feedbackFalse() {
 }
 void playFeedback(Verdict v) { if (v == V_TRUE) feedbackTrue(); else if (v == V_FALSE) feedbackFalse(); }
 void blink(uint8_t n, uint16_t ms) {
-  for (uint8_t i = 0; i < n; i++) { digitalWrite(LED_PIN, HIGH); delay(ms); digitalWrite(LED_PIN, LOW); delay(ms); }
+  for (uint8_t i = 0; i < n; i++) { led(true); delay(ms); led(false); delay(ms); }
+}
+void ackIR() {
+  led(true);
+  delay(35);
+  led(false);
+}
+void ackRawIR() {
+  led(true);
+  delay(20);
+  led(false);
+}
+void flashBit(bool one) {
+  led(true);
+  delay(one ? 260 : 70);
+  led(false);
+  delay(130);
+}
+void showNecCode(uint8_t code) {
+  led(true);                                      // marqueur de début
+  delay(650);
+  led(false);
+  delay(350);
+  for (int8_t bit = 7; bit >= 0; bit--) {
+    flashBit(code & (1 << bit));
+  }
 }
 
 // ================= Override IR (NEC) =================
 #if USE_IR
 int irReadNEC() {
   if (digitalRead(IR_PIN) != LOW) return -1;
+  g_irActivitySeen = true;
   unsigned long t0 = micros();
   while (digitalRead(IR_PIN) == LOW) if (micros() - t0 > 12000UL) return -1;
   unsigned long mark = micros() - t0;
@@ -110,15 +125,16 @@ void storeCodes() {
 bool waitIRCode(uint8_t* out, uint32_t timeoutMs, uint16_t blinkMs, int rejectCode) {
   uint32_t t0 = millis();
   while (millis() - t0 < timeoutMs) {
-    digitalWrite(LED_PIN, (millis() / blinkMs) & 1);
+    led((millis() / blinkMs) & 1);
     int c = irReadNEC();
     if (c >= 0 && c != rejectCode) {
       *out = (uint8_t)c;
-      digitalWrite(LED_PIN, LOW);
+      led(false);
       return true;
     }
+    if (c >= 0) blink(3, 40);                    // touche déjà utilisée
   }
-  digitalWrite(LED_PIN, LOW);
+  led(false);
   return false;
 }
 bool learnCodes() {
@@ -140,7 +156,7 @@ bool learnCodes() {
   feedbackFalse();
   g_learned = true;
   storeCodes();
-  digitalWrite(LED_PIN, LOW);
+  led(false);
   return true;
 }
 #endif
@@ -266,14 +282,16 @@ Verdict rc522Verdict() {
 
 void setup() {
   pinMode(MOTOR_PIN, OUTPUT); motor(0);
-  motor(180); delay(60); motor(0);               // "bip" de démarrage
+  pinMode(LED_PIN, OUTPUT); led(false);
+  blink(2, 80);                                  // preuve de vie LED au démarrage
 #if USE_RC522
   rc522Begin();
   bool ok = rc522Present();
   blink(ok ? 2 : 6, ok ? 250 : 90);              // 2 lents = RC522 OK ; 6 rapides = absent
 #endif
 #if USE_IR
-  pinMode(IR_PIN, INPUT);
+  pinMode(IR_PIN, INPUT_PULLUP);
+#if !IR_DIAGNOSTIC_MODE
   loadCodes();
   // Evite un re-learn accidentel: il faut 2 trames NEC valides au boot.
   bool relearn = false;
@@ -291,15 +309,27 @@ void setup() {
     if (!okLearn && g_learned) blink(2, 80);   // anciens codes conservés
   }
 #endif
+#endif
 }
 
 void loop() {
 #if USE_IR
+  g_irActivitySeen = false;
   int c = irReadNEC();                            // override prioritaire
   if (c >= 0) {
+#if IR_DIAGNOSTIC_MODE
+    showNecCode((uint8_t)c);                      // diagnostic: commande NEC complète
+#else
+    ackIR();                                      // diagnostic: une trame NEC valide est vue
     if (g_learned && (uint8_t)c == g_trueCode)       playFeedback(V_TRUE);
     else if (g_learned && (uint8_t)c == g_falseCode) playFeedback(V_FALSE);
+#endif
     delay(150); return;
+  }
+  if (g_irActivitySeen) {
+    ackRawIR();                                   // signal IR vu, mais pas NEC valide
+    delay(60);
+    return;
   }
 #endif
 #if USE_RC522
