@@ -1,4 +1,4 @@
-/* Diapason des Sentiers — Digispark (ATtiny85)
+/* Diapason des Sentiers — Digispark Pro (ATtiny167)
    ------------------------------------------------------------------
    Prop AUTONOME. Lit une carte RFID (RC522) contenant le texte "true"/"false"
    et répond par le moteur de vibration :
@@ -6,17 +6,17 @@
      - "false" -> "bourdonnement laid" : vibration hachée
    OVERRIDE télécommande IR (NEC) prioritaire = BACKUP si le RC522 ne marche pas.
 
-   Astuce broches (ATtiny85 : 5 E/S seulement) : la sortie du récepteur IR est
-   partagée avec MISO (les deux sont des ENTRÉES ; le RC522 met MISO en haute
-   impédance quand SS est haut). Une résistance série de 1 kΩ sur la sortie IR
-   protège des lectures SPI. Le moteur garde sa propre broche.
+   Digispark Pro (ATtiny167) : on utilise les broches SPI matérielles du core
+   Digistump (MOSI=10, MISO=8, SCK=11, SS=12). Le récepteur IR n'est plus
+   partagé avec MISO ; il a sa propre entrée.
 
-   Brochage (P5 = reset, à éviter) :
-     P0 = MOSI  -> RC522
-     P4 = SCK   -> RC522
-     P2 = MISO  <- RC522   ET sortie récepteur IR via 1 kΩ
-     P3 = SS/NSS-> RC522
-     P1 = moteur (transistor + diode)  + LED interne
+   Brochage utilisé :
+     D10 = MOSI  -> RC522
+     D11 = SCK   -> RC522
+     D8  = MISO  <- RC522
+     D12 = SS/NSS-> RC522
+     D2  = entrée récepteur IR (TSOP/VS1838B)
+     D1  = moteur (transistor + diode)
      RST du RC522 -> VCC (reset logiciel géré par commande)
 
    ⚠️ Pilote RC522 en SPI logiciel NON testé sur matériel : à valider au banc.
@@ -30,14 +30,14 @@
 #define USE_RC522 1
 #define USE_IR    1
 
-// ---- Broches ----
-#define PIN_MOSI 0
-#define PIN_SCK  4
-#define PIN_MISO 2          // partagé avec l'IR (résistance série 1 kΩ)
-#define PIN_SS   3
+// ---- Broches (Digispark Pro / ATtiny167) ----
+#define PIN_MOSI MOSI
+#define PIN_SCK  SCK
+#define PIN_MISO MISO
+#define PIN_SS   SS
 #define MOTOR_PIN 1
-#define LED_PIN   1         // = moteur (LED interne montre la vibration)
-#define IR_PIN    2         // = PIN_MISO (partagé)
+#define LED_PIN   1         // LED/PWM sur D1
+#define IR_PIN    2         // entrée dédiée IR
 
 #define EE_MAGIC 0x5A
 uint8_t g_trueCode = 0, g_falseCode = 0;
@@ -212,7 +212,7 @@ void rc522Begin() {
   pinMode(PIN_SS, OUTPUT);  digitalWrite(PIN_SS, HIGH);
   pinMode(PIN_SCK, OUTPUT); digitalWrite(PIN_SCK, LOW);
   pinMode(PIN_MOSI, OUTPUT);
-  pinMode(PIN_MISO, INPUT);            // jamais piloté par le MCU (partagé IR)
+  pinMode(PIN_MISO, INPUT);
   rcWrite(R_Command, C_SoftReset); delay(50);
   rcWrite(R_TMode, 0x8D); rcWrite(R_TPrescaler, 0x3E);
   rcWrite(R_TReloadL, 30); rcWrite(R_TReloadH, 0);
