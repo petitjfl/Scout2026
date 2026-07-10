@@ -2,8 +2,8 @@
 
 Prop **autonome, hors réseau** (pas d'ESP-NOW).
 
-Mode actuel : **diagnostic IR seul**. Le RC522 est désactivé dans le firmware
-pour isoler le problème de télécommande/récepteur.
+Mode actuel : **IR seul**. Le RC522 est désactivé dans le firmware pour isoler
+le système télécommande/récepteur/moteur.
 
 - `true`  → vibration propre : trois pulsations douces.
 - `false` → bourdonnement haché, dissonant (~0,9 s).
@@ -80,20 +80,30 @@ pio run
 pio run -t upload
 ```
 
-4. Tester la LED et le recepteur IR.
+4. Apprendre deux boutons IR, puis tester la LED et le moteur.
 
 ## Utilisation
 
 - **Démarrage** : 2 flashs LED = le firmware tourne et la LED D1 fonctionne.
-- **Bouton IR** :
-  - 1 flash court = activité brute vue sur D2, mais pas une trame NEC valide.
-  - 1 flash long, pause, puis 8 flashs = trame NEC valide décodée. Les 8 flashs
-    affichent le code bouton en binaire : court = 0, long = 1.
+- **Apprentissage** :
+  - Si aucune touche n'est apprise, la LED clignote lentement : presser le
+    bouton `true`.
+  - Ensuite la LED clignote rapidement : presser un bouton different pour
+    `false`.
+  - Pour refaire l'apprentissage plus tard, allumer la carte et presser le
+    nouveau bouton `true` pendant les 4 premieres secondes.
+- **Boutons appris** :
+  - `true` = 2 flashs LED lents, puis vibration agréable.
+  - `false` = 6 flashs LED rapides, puis vibration tres désagréable.
+- **Diagnostic IR** :
+  - 1 flash très court = activité brute vue sur D2, mais pas une trame NEC
+    valide.
+  - 3 flashs rapides, puis 1 flash long + 8 bits = bouton NEC valide mais non
+    appris. Les 8 bits affichent le code : court = 0, long = 1.
   - Aucun flash = le signal du recepteur IR n'arrive pas sur D2. Verifier
     VCC/GND/OUT, le sens du recepteur, la masse commune, et que OUT est bien sur
     D2.
 
 ## État / limites
 
-- Flags `USE_RC522`, `USE_IR` et `IR_DIAGNOSTIC_MODE` en tête de
-  `src/main.cpp`.
+- Flags `USE_RC522`, `USE_IR` et `STARTUP_RELEARN_MS` en tête de `src/main.cpp`.

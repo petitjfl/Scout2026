@@ -1,8 +1,9 @@
 /* Diapason des Sentiers — Digispark Pro (ATtiny167)
    ------------------------------------------------------------------
-   Mode actuel : diagnostic IR seul.
-   - flash court LED = activité brute vue sur D2
-   - flash long + 8 bits LED = commande NEC décodée
+   Mode actuel : IR seul.
+   - première touche apprise = true  -> vibration agréable
+   - deuxième touche apprise = false -> vibration très désagréable
+   La LED intégrée reste indépendante du moteur pour diagnostiquer.
 
    Brochage utilisé :
      D2  = entrée récepteur IR (TSOP/VS1838B)
@@ -15,7 +16,7 @@
 
 #define USE_RC522 0
 #define USE_IR    1
-#define IR_DIAGNOSTIC_MODE 1
+#define STARTUP_RELEARN_MS 4000UL
 
 // ---- Broches (Digispark Pro / ATtiny167) ----
 #define PIN_MOSI MOSI
@@ -60,15 +61,19 @@ void playFeedback(Verdict v) { if (v == V_TRUE) feedbackTrue(); else if (v == V_
 void blink(uint8_t n, uint16_t ms) {
   for (uint8_t i = 0; i < n; i++) { led(true); delay(ms); led(false); delay(ms); }
 }
-void ackIR() {
-  led(true);
-  delay(35);
-  led(false);
-}
 void ackRawIR() {
   led(true);
   delay(20);
   led(false);
+}
+void ackTrue() {
+  blink(2, 140);
+}
+void ackFalse() {
+  blink(6, 45);
+}
+void ackUnknown() {
+  blink(3, 45);
 }
 void flashBit(bool one) {
   led(true);
@@ -122,6 +127,14 @@ void storeCodes() {
   eeprom_update_byte((uint8_t*)2, g_falseCode);
   eeprom_update_byte((uint8_t*)0, EE_MAGIC);
 }
+int waitFirstStartupCode(uint32_t timeoutMs) {
+  uint32_t t0 = millis();
+  while (millis() - t0 < timeoutMs) {
+    int c = irReadNEC();
+    if (c >= 0) return c;
+  }
+  return -1;
+}
 bool waitIRCode(uint8_t* out, uint32_t timeoutMs, uint16_t blinkMs, int rejectCode) {
   uint32_t t0 = millis();
   while (millis() - t0 < timeoutMs) {
@@ -137,22 +150,23 @@ bool waitIRCode(uint8_t* out, uint32_t timeoutMs, uint16_t blinkMs, int rejectCo
   led(false);
   return false;
 }
-bool learnCodes() {
-  uint8_t c = 0;
-  if (!waitIRCode(&c, 15000UL, 200, -1)) {
+bool learnCodes(int firstCode) {
+  if (firstCode >= 0) {
+    g_trueCode = (uint8_t)firstCode;
+  } else if (!waitIRCode(&g_trueCode, 15000UL, 220, -1)) {
     blink(4, 60);                               // timeout d'apprentissage
     return false;
   }
-  feedbackTrue(); delay(400);
+  ackTrue();
+  feedbackTrue();
+  delay(500);
 
-  uint8_t d = 0;
-  if (!waitIRCode(&d, 15000UL, 80, c)) {
+  if (!waitIRCode(&g_falseCode, 15000UL, 80, g_trueCode)) {
     blink(4, 60);                               // timeout d'apprentissage
     return false;
   }
 
-  g_trueCode = c;
-  g_falseCode = d;
+  ackFalse();
   feedbackFalse();
   g_learned = true;
   storeCodes();
@@ -291,24 +305,12 @@ void setup() {
 #endif
 #if USE_IR
   pinMode(IR_PIN, INPUT_PULLUP);
-#if !IR_DIAGNOSTIC_MODE
   loadCodes();
-  // Evite un re-learn accidentel: il faut 2 trames NEC valides au boot.
-  bool relearn = false;
-  uint8_t irSeen = 0;
-  uint32_t t = millis();
-  while (millis() - t < 2500) {
-    if (irReadNEC() >= 0) {
-      irSeen++;
-      delay(180);                               // laisse passer la répétition
-      if (irSeen >= 2) { relearn = true; break; }
-    }
-  }
-  if (!g_learned || relearn) {
-    bool okLearn = learnCodes();
+  int startupCode = waitFirstStartupCode(STARTUP_RELEARN_MS);
+  if (!g_learned || startupCode >= 0) {
+    bool okLearn = learnCodes(startupCode);
     if (!okLearn && g_learned) blink(2, 80);   // anciens codes conservés
   }
-#endif
 #endif
 }
 
@@ -317,13 +319,16 @@ void loop() {
   g_irActivitySeen = false;
   int c = irReadNEC();                            // override prioritaire
   if (c >= 0) {
-#if IR_DIAGNOSTIC_MODE
-    showNecCode((uint8_t)c);                      // diagnostic: commande NEC complète
-#else
-    ackIR();                                      // diagnostic: une trame NEC valide est vue
-    if (g_learned && (uint8_t)c == g_trueCode)       playFeedback(V_TRUE);
-    else if (g_learned && (uint8_t)c == g_falseCode) playFeedback(V_FALSE);
-#endif
+    if (g_learned && (uint8_t)c == g_trueCode) {
+      ackTrue();
+      playFeedback(V_TRUE);
+    } else if (g_learned && (uint8_t)c == g_falseCode) {
+      ackFalse();
+      playFeedback(V_FALSE);
+    } else {
+      ackUnknown();
+      showNecCode((uint8_t)c);
+    }
     delay(150); return;
   }
   if (g_irActivitySeen) {
