@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pio run -d \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\\\\master_esp32\")",
+      "PowerShell($paths = @\\(\"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\", \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\platformio.exe\"\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Write-Output \"FOUND: $p\" } })",
+      "PowerShell(& \"C:\\\\Users\\\\valse\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -d \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\\\\master_esp32\")",
+      "PowerShell(& \"C:\\\\Users\\\\valse\\\\.platformio\\\\penv\\\\Scripts\\\\python.exe\" -m pip install intelhex 2>&1)",
+      "Read(//c/Users/valse/OneDrive/Meute 6a/Scout2026/**)",
+      "Bash(find balise_esp8266 lanterne_esp8266 medaillon_esp8266 -type f \\\\\\( -name \"*.ino\" -o -name \"*.cpp\" -o -name \"*.h\" \\\\\\))",
+      "Bash(find balise_esp8266 lanterne_esp8266 medaillon_esp8266 -type f \\\\\\( -name \"*.ino\" -o -name \"*.cpp\" -o -name \"*.h\" \\\\\\) -not -path \"*/.pio/*\")",
+      "Bash(cd \"c:/Users/valse/OneDrive/Meute 6a/Scout2026\" && echo \"=== lanterne platformio.ini \\($\\(wc -c < lanterne_esp8266/platformio.ini\\) bytes\\) ===\" && cat lanterne_esp8266/platformio.ini; echo \"\"; echo \"=== balise platformio.ini ===\"; cat balise_esp8266/balise_esp8266/platformio.ini)",
+      "Bash(node --check app.js)",
+      "Bash(node --check \"C:/Users/valse/AppData/Local/Temp/claude/c--Users-valse-OneDrive-Meute-6a-Scout2026-master-esp32/0c12e984-c545-4c70-b232-a280c6da0c4f/scratchpad/mockserver/server.js\")",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)",
+      "Bash(node server.js)",
+      "PowerShell($root = \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\"; foreach \\($f in @\\(\"README.md\", \".gitignore\", \"master_esp32\\\\platformio.ini\", \"master_esp32\\\\data\\\\config.json\", \"balise_esp8266\\\\platformio.ini\", \"balise_esp8266\\\\balise_esp8266\\\\platformio.ini\", \"lanterne_esp8266\\\\platformio.ini\", \"medaillon_esp8266\\\\platformio.ini\", \"diapason_digispark\\\\platformio.ini\"\\)\\) { Write-Output \"===== $f =====\"; Get-Content \\(Join-Path $root $f\\) -Encoding UTF8 })",
+      "PowerShell(& \"C:\\\\Users\\\\valse\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run -d \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\\\\master_esp32\" 2>&1)",
+      "PowerShell($pio = \"C:\\\\Users\\\\valse\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\"; $root = \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\"; foreach \\($p in @\\(\"balise_esp8266\", \"lanterne_esp8266\", \"medaillon_esp8266\", \"diapason_digispark\"\\)\\) { Write-Output \"########## $p ##########\"; & $pio run -d \"$root\\\\$p\" 2>&1 | Select-String -Pattern \"SUCCESS|FAILED|error|Error|RAM:|Flash:\" | Select-Object -First 20 })",
+      "PowerShell($root = \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\\\\balise_esp8266\\\\.pio\\\\build\"; foreach \\($e in @\\(\"balise_nord\",\"balise_sud\",\"balise_est\",\"balise_ouest\"\\)\\) { $bytes = [System.IO.File]::ReadAllBytes\\(\"$root\\\\$e\\\\firmware.bin\"\\); $txt = [System.Text.Encoding]::ASCII.GetString\\($bytes\\); $found = @\\(\"Balise_Nord\",\"Balise_Sud\",\"Balise_Est\",\"Balise_Ouest\"\\) | Where-Object { $txt.Contains\\($_\\) }; Write-Output \"$e -> contient : $\\($found -join ', '\\)\" })",
+      "PowerShell(git -C $root add -A)",
+      "PowerShell(git -C $root status --short)",
+      "PowerShell($root = \"c:\\\\Users\\\\valse\\\\OneDrive\\\\Meute 6a\\\\Scout2026\")"
+    ]
+  }
+}

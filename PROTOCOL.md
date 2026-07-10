@@ -63,7 +63,7 @@ Tout mode **forcé** maintient la balise éveillée (pas de deep-sleep) jusqu'à
 |---|---|---|
 | `OFF` | 0 | éteint |
 | `IDLE` | 1 | respiration bleue faible (veille nocturne, visible des tentes) |
-| `GLITCH` | 2 | flashs chaotiques rouge/ambre/bleu |
+| `GLITCH` | 2 | néon bleu instable, flashs blanc/teal et coupures aléatoires |
 | `AMBER` | 3 | ambre fixe (finale — préparation) |
 | `BLUE` | 4 | bleu stable plein (finale — « la balise tient ») |
 | `ALERT` | 5 | ambre clignotant ~1,4 Hz (finale — le Windigo teste le périmètre) |

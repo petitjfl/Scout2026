@@ -16,8 +16,14 @@
 */
 
 #include <Arduino.h>
+#ifdef BALISE_ESP32
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+#else
 #include <ESP8266WiFi.h>
 #include <espnow.h>
+#endif
 #include <FastLED.h>
 #include <EEPROM.h>
 
@@ -40,7 +46,12 @@ const bool USE_DEEP_SLEEP = !DEBUG;
 
 #define WIFI_CHANNEL 9  // canal imposé, doit correspondre au master
 
+#ifndef LED_PIN
 #define LED_PIN D4
+#endif
+#ifndef BATTERY_PIN
+#define BATTERY_PIN A0
+#endif
 #define NUM_LEDS 6
 CRGB leds[NUM_LEDS];
 
@@ -133,7 +144,7 @@ void setMode(Mode m, bool force=false) {
 }
 
 int readBatteryMv() {
-  int raw = analogRead(A0);
+  int raw = analogRead(BATTERY_PIN);
   float vA0 = (raw * (ADC_REF_VOLTAGE / ADC_MAX));
   float battV = vA0 * ((R1 + R2) / R2);
   return int(battV * 1000.0);
@@ -143,45 +154,60 @@ void effectIdleBreath(uint8_t brightness) {
   static uint32_t t0 = millis();
   uint32_t t = millis() - t0;
   float phase = (t % 4000) / 4000.0;
-  float val = (sin(phase * 2.0 * PI - PI/2.0) + 1.0) / 2.0;
+  // Narrow bell-shaped pulse: it reaches the same visible peak, but spends
+  // most of each cycle near darkness instead of averaging a sine wave at 50%.
+  // Raising the smooth 0..1 sine envelope to the fourth power keeps the pulse
+  // fluid while reducing its theoretical average output to ~27% of the peak.
+  float envelope = (sinf(phase * 2.0f * PI - PI/2.0f) + 1.0f) / 2.0f;
+  float val = envelope * envelope;
+  val *= val;
   uint8_t b = uint8_t(val * brightness);
   for (int i=0;i<NUM_LEDS;i++) leds[i] = CRGB(0, 0, b);
   FastLED.show();
 }
 
 void effectGlitch() {
-  static uint32_t lastBase = 0;
-  if (millis() - lastBase > 80) {
-    lastBase = millis();
-    int c = random(0,3);
-    CRGB baseColor = (c==0) ? CRGB::Red : (c==1) ? CRGB(255,160,0) : CRGB(0,120,255);
-    uint8_t baseIntensity = random(30, 120);
-    for (int i=0;i<NUM_LEDS;i++) leds[i] = baseColor.nscale8_video(baseIntensity);
-    FastLED.show();
+  // Tube neon bleu defectueux : tenues instables, micro-coupures, rares
+  // extinctions franches et reprises blanc/teal. Entierement non bloquant afin
+  // que l'ESP-NOW reste reactif pendant les rafales.
+  static unsigned long nextChangeAt = 0;
+  static unsigned long effectStartedAt = 0;
+  unsigned long now = millis();
+
+  if (effectStartedAt != modeStartMs) {
+    effectStartedAt = modeStartMs;
+    nextChangeAt = now;
   }
-  static unsigned long nextFlashAt = 0;
-  if (millis() >= nextFlashAt) {
-    int flashDur = random(20, 200);
-    int bursts = random(1, 5);
-    for (int b=0;b<bursts;b++) {
-      int start = random(0, NUM_LEDS);
-      int len = random(1, min(6, NUM_LEDS));
-      CRGB color = (random(0,3)==0) ? CRGB::Red : (random(0,2)==0 ? CRGB(255,160,0) : CRGB(0,120,255));
-      uint8_t intensity = random(120, 255);
-      for (int i=0;i<len;i++) {
-        int idx = (start + i) % NUM_LEDS;
-        leds[idx] = color.nscale8_video(intensity);
-      }
-      FastLED.show();
-      delay(random(20, flashDur));
-      for (int f=0; f<2; f++) {
-        for (int i=0;i<NUM_LEDS;i++) leds[i].nscale8(180);
-        FastLED.show();
-        delay(20);
-      }
-    }
-    nextFlashAt = millis() + random(50, 2000);
+  if ((long)(now - nextChangeAt) < 0) return;
+
+  uint8_t event = random8(100);
+  unsigned long duration;
+  FastLED.clear();
+
+  if (event < 48) {
+    uint8_t level = random8(75, 175);
+    CRGB blue = CRGB(random8(0, 10), random8(35, 85), 255);
+    blue.nscale8_video(level);
+    fill_solid(leds, NUM_LEDS, blue);
+    duration = random(90, 650);
+  } else if (event < 66) {
+    duration = random(18, 95);       // micro-coupure
+  } else if (event < 76) {
+    duration = random(180, 900);     // vrai moment de noir
+  } else if (event < 89) {
+    fill_solid(leds, NUM_LEDS, CRGB(random(170, 256), 255, 255));
+    duration = random(20, 85);       // claquement blanc froid
+  } else {
+    int start = random(0, NUM_LEDS);
+    int len = random(1, NUM_LEDS);
+    CRGB teal = CRGB(0, random(170, 256), random(150, 240));
+    for (int i=0; i<len; i++) leds[(start + i) % NUM_LEDS] = teal;
+    duration = random(25, 150);      // arc teal incomplet
   }
+
+  if (event < 66 && random8(100) < 35) leds[random(0, NUM_LEDS)] = CRGB::Black;
+  FastLED.show();
+  nextChangeAt = now + duration;
 }
 
 // ---------------- Effets de la finale ----------------
@@ -330,7 +356,11 @@ void loadState() {
 }
 
 // ---------------- Callbacks ----------------
-void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
+#ifdef BALISE_ESP32
+void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+#else
+void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
+#endif
   // Bound the copy: don't trust a NUL terminator from the sender.
   char tmp[251];
   int n = (len < (int)sizeof(tmp) - 1) ? len : (int)sizeof(tmp) - 1;
@@ -438,7 +468,11 @@ void onDataRecv(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   }
 }
 
+#ifdef BALISE_ESP32
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t sendStatus) {
+#else
 void onDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+#endif
   if (DEBUG) {
     char macStr[18];
     // FIXED: correct format specifiers
@@ -454,6 +488,20 @@ void onDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
 void setupEspNow() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+#ifdef BALISE_ESP32
+  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  if (esp_now_init() != ESP_OK) {
+    if (DEBUG) Serial.println("ESP-NOW init failed, restarting");
+    ESP.restart();
+  }
+  esp_now_register_recv_cb(onDataRecv);
+  esp_now_register_send_cb(onDataSent);
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, broadcastAddress, 6);
+  peer.channel = WIFI_CHANNEL;
+  peer.encrypt = false;
+  esp_now_add_peer(&peer);
+#else
   // For ESP8266, set channel explicitly before esp_now_init
   wifi_set_channel(WIFI_CHANNEL);
   if (esp_now_init() != 0) {
@@ -465,6 +513,7 @@ void setupEspNow() {
   esp_now_register_send_cb(onDataSent);
   // add broadcast peer on WIFI_CHANNEL
   esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_COMBO, WIFI_CHANNEL, NULL, 0);
+#endif
 }
 
 void setup() {
@@ -488,7 +537,11 @@ void setup() {
 
   // Quand elle est éveillée (la nuit / en finale) : radio sans veille pour un
   // ESP-NOW réactif et des LEDs stables. Le jour, la boucle repasse en deep-sleep.
+#ifdef BALISE_ESP32
+  esp_wifi_set_ps(WIFI_PS_NONE);
+#else
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
+#endif
 }
 
 void loop() {
@@ -509,7 +562,11 @@ void loop() {
       delay(10); // les callbacks ESP-NOW tournent en asynchrone
     }
     saveState();
+#ifdef BALISE_ESP32
+    esp_deep_sleep(WAKE_INTERVAL_S * 1000000ULL);
+#else
     ESP.deepSleep(WAKE_INTERVAL_S * 1000000ULL);
+#endif
     // ne revient pas
   } else {
     // Éveillée : heartbeat périodique.
