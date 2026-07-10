@@ -107,12 +107,41 @@ void storeCodes() {
   eeprom_update_byte((uint8_t*)2, g_falseCode);
   eeprom_update_byte((uint8_t*)0, EE_MAGIC);
 }
-void learnCodes() {
-  int c; do { digitalWrite(LED_PIN, (millis() / 200) & 1); c = irReadNEC(); } while (c < 0);
-  g_trueCode = (uint8_t)c; feedbackTrue(); delay(400);
-  int d; do { digitalWrite(LED_PIN, (millis() / 80) & 1); d = irReadNEC(); } while (d < 0 || d == c);
-  g_falseCode = (uint8_t)d; feedbackFalse();
-  g_learned = true; storeCodes(); digitalWrite(LED_PIN, LOW);
+bool waitIRCode(uint8_t* out, uint32_t timeoutMs, uint16_t blinkMs, int rejectCode) {
+  uint32_t t0 = millis();
+  while (millis() - t0 < timeoutMs) {
+    digitalWrite(LED_PIN, (millis() / blinkMs) & 1);
+    int c = irReadNEC();
+    if (c >= 0 && c != rejectCode) {
+      *out = (uint8_t)c;
+      digitalWrite(LED_PIN, LOW);
+      return true;
+    }
+  }
+  digitalWrite(LED_PIN, LOW);
+  return false;
+}
+bool learnCodes() {
+  uint8_t c = 0;
+  if (!waitIRCode(&c, 15000UL, 200, -1)) {
+    blink(4, 60);                               // timeout d'apprentissage
+    return false;
+  }
+  feedbackTrue(); delay(400);
+
+  uint8_t d = 0;
+  if (!waitIRCode(&d, 15000UL, 80, c)) {
+    blink(4, 60);                               // timeout d'apprentissage
+    return false;
+  }
+
+  g_trueCode = c;
+  g_falseCode = d;
+  feedbackFalse();
+  g_learned = true;
+  storeCodes();
+  digitalWrite(LED_PIN, LOW);
+  return true;
 }
 #endif
 
@@ -246,9 +275,21 @@ void setup() {
 #if USE_IR
   pinMode(IR_PIN, INPUT);
   loadCodes();
-  bool relearn = false; uint32_t t = millis();
-  while (millis() - t < 2500) { if (irReadNEC() >= 0) { relearn = true; break; } }
-  if (!g_learned || relearn) learnCodes();
+  // Evite un re-learn accidentel: il faut 2 trames NEC valides au boot.
+  bool relearn = false;
+  uint8_t irSeen = 0;
+  uint32_t t = millis();
+  while (millis() - t < 2500) {
+    if (irReadNEC() >= 0) {
+      irSeen++;
+      delay(180);                               // laisse passer la répétition
+      if (irSeen >= 2) { relearn = true; break; }
+    }
+  }
+  if (!g_learned || relearn) {
+    bool okLearn = learnCodes();
+    if (!okLearn && g_learned) blink(2, 80);   // anciens codes conservés
+  }
 #endif
 }
 

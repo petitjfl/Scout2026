@@ -102,10 +102,14 @@ pio run -t upload
 
 - **Démarrage** : bref « bip » moteur, puis diagnostic LED — 2 clignotements
   lents = RC522 détecté ; 6 rapides = absent (on compte sur l'IR).
-- **Apprentissage IR** (1er démarrage EEPROM vierge, ou n'importe quelle touche
-  pressée dans les 2,5 s après la mise sous tension) : LED lente → presser la
-  touche « vrai » (confirmation : vibration propre) ; LED rapide → presser la
-  touche « faux » (confirmation : bourdonnement). Mémorisé en EEPROM.
+- **Apprentissage IR**:
+  - Au premier démarrage (EEPROM vierge), apprentissage automatique.
+  - En re-apprentissage, il faut maintenant **2 trames NEC valides** dans les
+    2,5 s après mise sous tension (evite les declenchements accidentels).
+  - LED lente -> presser la touche "vrai" ; LED rapide -> presser une touche
+    differente pour "faux".
+  - Timeout de 15 s par etape: si timeout, les anciens codes EEPROM sont
+    conserves (pas de blocage infini).
 
 ## État / limites
 
