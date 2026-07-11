@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PIO Build (choisir balise)",
+      "type": "shell",
+      "command": "C:\\Users\\valse\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "--environment",
+        "${input:baliseEnv}"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "PIO Upload (choisir balise)",
+      "type": "shell",
+      "command": "C:\\Users\\valse\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "--target",
+        "upload",
+        "--environment",
+        "${input:baliseEnv}"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "baliseEnv",
+      "type": "pickString",
+      "description": "Choisir la balise a compiler / flasher",
+      "options": [
+        "balise_nord",
+        "balise_sud",
+        "balise_est",
+        "balise_ouest"
+      ],
+      "default": "balise_est"
+    }
+  ]
+}
