@@ -23,7 +23,7 @@ pio run -e balise_ouest -t upload    # id 4
 ```
 
 Important : un `pio run` (ou Upload VS Code) **sans** `-e` utilise
-`default_envs` dans `platformio.ini` (actuellement `balise_est`) et ne lance
+`default_envs` dans `platformio.ini` (actuellement `balise_nord`) et ne lance
 plus toutes les balises.
 
 Dans VS Code, vous pouvez aussi utiliser les tâches :
