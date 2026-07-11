@@ -70,17 +70,16 @@ const unsigned long TIME_SYNC_TIMEOUT_MS = 600000;
 unsigned long syncedEpoch = 0;
 unsigned long syncedMillis = 0;
 
-// Lecture batterie 18650 via diviseur EXTERNE sur A0 (le D1 mini de ce lot n'a
-// pas de diviseur interne : l'ADC est en pleine échelle brute ~1,0 V).
-//   +batterie --[ R_TOP 330k ]--(A0)--[ R_BOTTOM 100k ]-- GND
-// Point milieu = Vbat * 100/(330+100) = Vbat * 0,2326  -> 0,977 V à 4,2 V (OK <1V).
-// ADC_REF_VOLTAGE : pleine échelle réelle de l'ADC. Le "1,0 V" nominal de
-// l'ESP8266 varie en pratique de ~0,95 à ~1,10 V -> À CALIBRER (voir readBatteryVolts).
-const float ADC_REF_VOLTAGE = 1.0;      // ajuster après mesure au multimètre
-const int   ADC_MAX = 1023;
-const float R_TOP    = 330000.0;        // A0 <-330k- +batterie
-const float R_BOTTOM = 100000.0;        // A0 <-100k- GND
-const float BATT_DIVIDER = (R_TOP + R_BOTTOM) / R_BOTTOM;  // 4.30
+// Lecture batterie 18650 via diviseur EXTERNE sur A0 (330k vers +batterie,
+// 100k vers GND). En pratique ce D1 mini "lite" atténue ~4x PLUS que le seul
+// diviseur externe (diviseur interne en série) : 3,975 V mesurés -> ~238 counts,
+// pas ~946. Comme un pont de résistances est LINÉAIRE et passe par 0, on ne
+// devine pas les résistances : on calibre avec UN point réel mesuré.
+//   volts = raw * (BATT_CAL_VOLTS / BATT_CAL_RAW)
+// Pour (re)calibrer : flasher en DEBUG, lire "raw=NNN" sur le port série tout en
+// mesurant la batterie au multimètre, puis reporter les deux valeurs ci-dessous.
+const float BATT_CAL_VOLTS = 3.975f;    // tension multimètre au point de calibration
+const float BATT_CAL_RAW   = 238.0f;    // analogRead moyen correspondant
 
 // Courbe de décharge mesurée (18650 1800 mAh). Interpolée linéairement par
 // segments : plus fiable qu'une formule car la décharge Li-ion n'est pas linéaire.
@@ -166,8 +165,8 @@ float readBatteryVolts() {
   const int N = 8;
   for (int i = 0; i < N; i++) { acc += analogRead(BATTERY_PIN); delay(2); }
   float raw = acc / (float)N;
-  float vA0 = raw * (ADC_REF_VOLTAGE / ADC_MAX);
-  return vA0 * BATT_DIVIDER;
+  if (DEBUG) { Serial.print("[batt] raw="); Serial.println(raw, 1); } // aide calibration
+  return raw * (BATT_CAL_VOLTS / BATT_CAL_RAW);
 }
 
 int readBatteryMv() {
