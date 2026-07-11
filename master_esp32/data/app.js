@@ -425,9 +425,20 @@
     const id = parseInt(e.currentTarget.dataset.id, 10);
     const a = accessories.find(x => x.id === id);
     if (!a) { log(`Aucun accessoire id=${id}`); return; }
-    log(`Info ${a.name} — MAC=${normalizeMacDisplay(a.mac)} — présent=${a.present} — mode=${a.mode} — batt=${a.batteryMv}`);
+    log(`Info ${a.name} — MAC=${normalizeMacDisplay(a.mac)} — présent=${a.present} — mode=${a.mode} — batt=${fmtBattery(a) || a.batteryMv}`);
   }
   // --- end missing handlers ---
+
+  // Batterie : "3.90 V · 68 %" si le pourcentage est connu (-1 / absent = ancien
+  // firmware), sinon on retombe sur les millivolts bruts.
+  function fmtBattery(item) {
+    const mv = Number(item.batteryMv);
+    const pct = Number(item.batteryPct);
+    if (!Number.isFinite(mv) || mv <= 0) return '';
+    const volts = (mv / 1000).toFixed(2) + ' V';
+    if (Number.isFinite(pct) && pct >= 0) return `${volts} · ${pct} %`;
+    return volts;
+  }
 
   function renderAccessories() {
     try {
@@ -481,7 +492,7 @@
           <td class="mono">${escapeHtml(mac)}</td>
           <td>${presenceBadge}</td>
           <td>${escapeHtml(String(modeLabel(item.id, item.mode)))}</td>
-          <td>${item.batteryMv ?? ''}</td>
+          <td>${fmtBattery(item)}</td>
           <td class="row-actions">${actionsHtml}</td>
         `;
         _accessoriesTbody.appendChild(tr);
@@ -518,6 +529,7 @@
         present: !!obj.present,
         mode: obj.mode || '',
         batteryMv: obj.batteryMv || obj.batt || '',
+        batteryPct: (obj.batteryPct ?? obj.battPct ?? -1),
         lastHbMs: obj.lastHbMs || 0,
         glitch_locked: !!obj.glitch_locked,
         pending: undefined,
@@ -534,6 +546,8 @@
       if (typeof obj.mode !== 'undefined') a.mode = obj.mode;
       if (typeof obj.batteryMv !== 'undefined') a.batteryMv = obj.batteryMv;
       if (typeof obj.batt !== 'undefined') a.batteryMv = obj.batt;
+      if (typeof obj.batteryPct !== 'undefined') a.batteryPct = obj.batteryPct;
+      if (typeof obj.battPct !== 'undefined') a.batteryPct = obj.battPct;
       if (typeof obj.lastHbMs !== 'undefined') a.lastHbMs = obj.lastHbMs;
       if (typeof obj.glitch_locked !== 'undefined') a.glitch_locked = !!obj.glitch_locked;
       if (typeof obj.pending !== 'undefined') a.pending = obj.pending;
@@ -554,6 +568,7 @@
         present: typeof it.present !== 'undefined' ? !!it.present : true,
         mode: typeof it.mode !== 'undefined' ? it.mode : '',
         batteryMv: typeof it.batt !== 'undefined' ? it.batt : '',
+        batteryPct: (it.battPct ?? it.batteryPct ?? -1),
         lastHbMs: it.lastHbMs || Date.now(),
         glitch_locked: typeof it.glitch_locked !== 'undefined' ? !!it.glitch_locked : false,
         pending: undefined,
@@ -577,6 +592,8 @@
     a.present = typeof it.present !== 'undefined' ? !!it.present : a.present;
     a.mode = typeof it.mode !== 'undefined' ? it.mode : a.mode;
     a.batteryMv = typeof it.batt !== 'undefined' ? it.batt : a.batteryMv;
+    if (typeof it.battPct !== 'undefined') a.batteryPct = it.battPct;
+    else if (typeof it.batteryPct !== 'undefined') a.batteryPct = it.batteryPct;
     a.lastHbMs = it.lastHbMs || Date.now();
     if (typeof it.glitch_locked !== 'undefined') a.glitch_locked = !!it.glitch_locked;
 
@@ -610,6 +627,7 @@
               present: it.present || false,
               mode: it.mode || '',
               batteryMv: it.batteryMv || it.batt || '',
+              batteryPct: (it.batteryPct ?? it.battPct ?? -1),
               lastHbMs: it.lastHbMs || 0,
               glitch_locked: !!it.glitch_locked,
               pending: undefined,

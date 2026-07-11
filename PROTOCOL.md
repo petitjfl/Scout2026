@@ -19,11 +19,14 @@ dans les firmwares et dans `master_esp32/data/app.js`.
 
 | Message | Direction | Format |
 |---|---|---|
-| Heartbeat | accessoire → tous | `HB\|<seq>\|<id>\|<mode>\|<batt_mv>` |
+| Heartbeat | accessoire → tous | `HB\|<seq>\|<id>\|<mode>\|<batt_mv>\|<batt_pct>` |
 | Commande | master → accessoire | `CMD\|<NOM>[\|<arg>]` |
 | Accusé | accessoire → master | `ACK\|<id>\|<NOM>\|<status>` (`OK` / `ERR`) |
 
 - `seq` : compteur monotone par appareil (diagnostic de pertes).
+- `batt_mv` : tension batterie en millivolts. `batt_pct` : charge 0–100 %
+  interpolée sur la courbe de décharge mesurée. Champ **optionnel** ajouté après
+  coup : un firmware plus ancien envoie 4 champs, le master lit alors `pct = -1`.
 - Un préfixe d'adressage optionnel `TO\|<id>\|` devant la commande est encore
   accepté par tous les accessoires (compatibilité) ; le master n'en émet plus,
   l'unicast suffit.
@@ -152,8 +155,8 @@ Plus `{"type":"ping"}` → `{"type":"pong"}` (keepalive).
 
 | `type` | Contenu |
 |---|---|
-| `scan_result` | `items[]` : id, name, mac, present, lastHbMs, mode, batteryMv |
-| `hb_batch` | agrégat (≤ 1/s) : id, mode, batt, present, mac, lastHbMs |
+| `scan_result` | `items[]` : id, name, mac, present, lastHbMs, mode, batteryMv, batteryPct |
+| `hb_batch` | agrégat (≤ 1/s) : id, mode, batt, battPct, present, mac, lastHbMs |
 | `status` | changement de présence : id, present |
 | `pending_update` | commande en attente : id, cmd, nextTryAt, attempts |
 | `send_result` | id, cmd, ok, [queued], [reason: `no_mac` / `queue_full` / `max_attempts` / `expired`] |

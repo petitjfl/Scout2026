@@ -70,10 +70,26 @@ const unsigned long TIME_SYNC_TIMEOUT_MS = 600000;
 unsigned long syncedEpoch = 0;
 unsigned long syncedMillis = 0;
 
-const float ADC_REF_VOLTAGE = 3.2;
-const int ADC_MAX = 1023;
-const float R1 = 100000.0;
-const float R2 = 220000.0;
+// Lecture batterie 18650 via diviseur EXTERNE sur A0 (le D1 mini de ce lot n'a
+// pas de diviseur interne : l'ADC est en pleine échelle brute ~1,0 V).
+//   +batterie --[ R_TOP 330k ]--(A0)--[ R_BOTTOM 100k ]-- GND
+// Point milieu = Vbat * 100/(330+100) = Vbat * 0,2326  -> 0,977 V à 4,2 V (OK <1V).
+// ADC_REF_VOLTAGE : pleine échelle réelle de l'ADC. Le "1,0 V" nominal de
+// l'ESP8266 varie en pratique de ~0,95 à ~1,10 V -> À CALIBRER (voir readBatteryVolts).
+const float ADC_REF_VOLTAGE = 1.0;      // ajuster après mesure au multimètre
+const int   ADC_MAX = 1023;
+const float R_TOP    = 330000.0;        // A0 <-330k- +batterie
+const float R_BOTTOM = 100000.0;        // A0 <-100k- GND
+const float BATT_DIVIDER = (R_TOP + R_BOTTOM) / R_BOTTOM;  // 4.30
+
+// Courbe de décharge mesurée (18650 1800 mAh). Interpolée linéairement par
+// segments : plus fiable qu'une formule car la décharge Li-ion n'est pas linéaire.
+struct BattPoint { float v; uint8_t pct; };
+const BattPoint BATT_CURVE[] = {
+  {2.85f,   0}, {3.35f,  20}, {3.47f,  40},
+  {3.63f,  60}, {3.85f,  80}, {4.05f, 100}
+};
+const int BATT_CURVE_N = sizeof(BATT_CURVE) / sizeof(BATT_CURVE[0]);
 
 // 0..2 = jeu nocturne ; 3..8 = modes de la finale (voir changes.md / déroulé)
 enum Mode {
@@ -143,12 +159,36 @@ void setMode(Mode m, bool force=false) {
   }
 }
 
-int readBatteryMv() {
-  int raw = analogRead(BATTERY_PIN);
-  float vA0 = (raw * (ADC_REF_VOLTAGE / ADC_MAX));
-  float battV = vA0 * ((R1 + R2) / R2);
-  return int(battV * 1000.0);
+// Tension batterie en volts. Moyenne quelques lectures : l'A0 de l'ESP8266 est
+// bruité (et davantage avec le WiFi actif).
+float readBatteryVolts() {
+  long acc = 0;
+  const int N = 8;
+  for (int i = 0; i < N; i++) { acc += analogRead(BATTERY_PIN); delay(2); }
+  float raw = acc / (float)N;
+  float vA0 = raw * (ADC_REF_VOLTAGE / ADC_MAX);
+  return vA0 * BATT_DIVIDER;
 }
+
+int readBatteryMv() {
+  return int(readBatteryVolts() * 1000.0f + 0.5f);
+}
+
+// Pourcentage 0..100 interpolé sur la courbe mesurée (segments linéaires).
+uint8_t batteryPercent(float v) {
+  if (v <= BATT_CURVE[0].v)              return 0;
+  if (v >= BATT_CURVE[BATT_CURVE_N-1].v) return 100;
+  for (int i = 1; i < BATT_CURVE_N; i++) {
+    if (v < BATT_CURVE[i].v) {
+      const BattPoint &a = BATT_CURVE[i-1];
+      const BattPoint &b = BATT_CURVE[i];
+      float t = (v - a.v) / (b.v - a.v);
+      return (uint8_t)(a.pct + t * (b.pct - a.pct) + 0.5f);
+    }
+  }
+  return 100;
+}
+uint8_t readBatteryPercent() { return batteryPercent(readBatteryVolts()); }
 
 void effectIdleBreath(uint8_t brightness) {
   static uint32_t t0 = millis();
@@ -282,10 +322,12 @@ void sendAck(const uint8_t *mac, const char* cmd, const char* status) {
   }
 }
 void sendHeartbeat() {
-  int batt = readBatteryMv();
+  float volts = readBatteryVolts();          // une seule lecture ADC par HB
+  int batt = int(volts * 1000.0f + 0.5f);
+  uint8_t pct = batteryPercent(volts);
   char buf[80];
-  snprintf(buf, sizeof(buf), "HB|%lu|%u|%u|%d",
-           (unsigned long)hbSeq, (unsigned)DEVICE_ID, (unsigned)currentMode, batt);
+  snprintf(buf, sizeof(buf), "HB|%lu|%u|%u|%d|%u",
+           (unsigned long)hbSeq, (unsigned)DEVICE_ID, (unsigned)currentMode, batt, pct);
   sendBroadcast(buf);
   lastHeartbeatSent = millis();
   hbSeq++;
@@ -295,7 +337,12 @@ void sendHeartbeat() {
     Serial.print(" mode=");
     Serial.print((int)currentMode);
     Serial.print(" batt=");
-    Serial.println(batt);
+    Serial.print(batt);
+    Serial.print("mV (");
+    Serial.print(volts, 2);
+    Serial.print("V, ");
+    Serial.print(pct);
+    Serial.println("%)");
   }
 }
 

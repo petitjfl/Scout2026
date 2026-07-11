@@ -45,6 +45,7 @@ struct Accessory {
   unsigned long lastHbSeq;
   int mode;
   int batteryMv;
+  int batteryPct;   // -1 si non transmis (ancien firmware)
   unsigned long lastAckMs;
   bool present;
 };
@@ -159,6 +160,7 @@ void loadConfig() {
         accessories[accessoryCount].hasMac = false;
       }
       accessories[accessoryCount].present = false;
+      accessories[accessoryCount].batteryPct = -1;
       accessoryCount++;
     }
   }
@@ -348,15 +350,19 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
     int p2 = msg.indexOf('|', p1+1);
     int p3 = msg.indexOf('|', p2+1);
     int p4 = msg.indexOf('|', p3+1);
+    int p5 = (p4>0) ? msg.indexOf('|', p4+1) : -1;
     if (p1>0 && p2>0 && p3>0) {
       String seqS = msg.substring(3, p1);
       String idS  = msg.substring(p1+1, p2);
       String modeS= msg.substring(p2+1, p3);
       String battS= (p4>0) ? msg.substring(p3+1, p4) : msg.substring(p3+1);
+      // 5e champ optionnel = pourcentage batterie (firmware balise à jour).
+      String pctS = (p4>0) ? ((p5>0) ? msg.substring(p4+1, p5) : msg.substring(p4+1)) : "";
       uint8_t id = idS.toInt();
       unsigned long seq = seqS.toInt();
       int mode = modeS.toInt();
       int batt = battS.toInt();
+      int pct  = (pctS.length() > 0) ? pctS.toInt() : -1;
 
       int idx = -1;
       for (int i=0;i<accessoryCount;i++) if (accessories[i].id == id) { idx = i; break; }
@@ -367,6 +373,7 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
         for (int j=0;j<6;j++) accessories[idx].mac[j] = 0;
         accessories[idx].hasMac = false;
         accessories[idx].present = false;
+        accessories[idx].batteryPct = -1;
         Serial.print("New accessory id=");
         Serial.println(id);
       }
@@ -388,6 +395,7 @@ void processRxMessage(const uint8_t * mac, const uint8_t *incomingData, int len)
         accessories[idx].lastHbSeq = seq;
         accessories[idx].mode = mode;
         accessories[idx].batteryMv = batt;
+        accessories[idx].batteryPct = pct;
         accessories[idx].present = true;
 
         // mark dirty for batch broadcast (do not broadcast immediately)
@@ -508,6 +516,7 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
       it["lastHbMs"] = accessories[i].lastHbMs;
       it["mode"] = accessories[i].mode;
       it["batteryMv"] = accessories[i].batteryMv;
+      it["batteryPct"] = accessories[i].batteryPct;
     }
     String scanOut; serializeJson(s, scanOut);
     wsSend(num, scanOut);
@@ -585,6 +594,7 @@ void setup() {
   for (int i=0;i<MAX_ACCESSORIES;i++) {
     accessories[i].hasMac = false;
     accessories[i].present = false;
+    accessories[i].batteryPct = -1;
     for (int j=0;j<6;j++) accessories[i].mac[j] = 0;
   }
   for (int i=0;i<MAX_PENDING;i++) {
@@ -715,6 +725,7 @@ void loop() {
       it["id"] = accessories[i].id;
       it["mode"] = accessories[i].mode;
       it["batt"] = accessories[i].batteryMv;
+      it["battPct"] = accessories[i].batteryPct;
       it["present"] = accessories[i].present;
       it["mac"] = accessories[i].hasMac ? macToStr(accessories[i].mac) : "";
       it["lastHbMs"] = accessories[i].lastHbMs;
@@ -829,6 +840,7 @@ void handleWSMessage(uint8_t num, WStype_t type, uint8_t * payload, size_t lengt
         it["lastHbMs"] = accessories[i].lastHbMs;
         it["mode"] = accessories[i].mode;
         it["batteryMv"] = accessories[i].batteryMv;
+        it["batteryPct"] = accessories[i].batteryPct;
       }
       String out; serializeJson(d,out);
       wsSend(num, out);
